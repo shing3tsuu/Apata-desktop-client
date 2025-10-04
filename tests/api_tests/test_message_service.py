@@ -1,9 +1,9 @@
 import pytest
-import os
-import base64
-import json
+import asyncio
 from dishka import make_async_container
 from random import randint
+from unittest.mock import AsyncMock, patch
+import time
 
 from src.providers import AppProvider
 from src.adapters.api.service import AuthHTTPService, MessageHTTPService
@@ -14,190 +14,181 @@ number2 = randint(1, 1000000)
 fake_user_1 = f"fake_user{number1}"
 fake_user_2 = f"fake_user{number2}"
 
-
-async def get_service():
+async def get_services():
     container = make_async_container(AppProvider())
     async with container() as request_container:
         auth_service = await request_container.get(AuthHTTPService)
         message_service = await request_container.get(MessageHTTPService)
         return auth_service, message_service, container
 
-
 async def close_container(container):
     await container.close()
 
 @pytest.mark.asyncio
-async def test_send_and_receive_message():
-    auth_service, message_service, container = await get_service()
+async def test_long_polling_timeout_behavior():
+    auth_service, message_service, container = await get_services()
+
+    try:
+        # register user
+        user_data = await auth_service.register(fake_user_1 + "_timeout")
+        login_data = await auth_service.login(user_data["username"], user_data["ecdsa_private_key"])
+
+        received_messages = []
+        polling_called = asyncio.Event()
+
+        async def message_callback(decrypted_message):
+            received_messages.append(decrypted_message)
+
+        # create a mock for poll_messages that simulates a timeout
+        original_poll = message_service._message_dao.poll_messages
+
+        async def mocked_poll(timeout, token):
+            polling_called.set()  # signal that polling has been called
+            # simulate a timeout by returning an empty result after a short delay
+            await asyncio.sleep(0.1)
+            return {"has_messages": False, "messages": []}
+
+        # replace the method with mock
+        message_service._message_dao.poll_messages = mocked_poll
+
+        # launch polling with a time limit
+        polling_task = asyncio.create_task(
+            message_service.start_message_polling(
+                token=login_data["access_token"],
+                user_private_key=user_data["ecdh_private_key"],
+                sender_public_keys={},
+                message_callback=message_callback
+            )
+        )
+
+        # wait for the polling call (maximum 5 seconds)
+        try:
+            await asyncio.wait_for(polling_called.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            pytest.fail("Polling не был вызван в течение 5 секунд")
+
+        # let polling do some work
+        await asyncio.sleep(1)
+
+        # stop polling
+        await message_service.stop_message_polling()
+
+        # waiting for the task to complete
+        try:
+            await asyncio.wait_for(polling_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            # if the task is not completed, cancel it.
+            polling_task.cancel()
+            try:
+                await polling_task
+            except asyncio.CancelledError:
+                print("✓ Polling задача отменена")
+            except Exception as e:
+                print(f"Ошибка при отмене задачи: {e}")
+
+        # check that there are no messages (as expected during the timeout)
+        assert len(received_messages) == 0, "Не должно быть полученных сообщений при таймауте"
+
+        # check polling status
+        status = message_service.get_polling_status()
+        assert status["is_polling"] == False, "Polling должен быть остановлен"
+        assert status["task_running"] == False, "Polling задача не должна работать"
+
+        # restoring the original method
+        message_service._message_dao.poll_messages = original_poll
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        pytest.fail(f"Long polling timeout test failed with error: {str(e)}")
+    finally:
+        await close_container(container)
+
+
+@pytest.mark.asyncio
+async def test_postgres_listen_notify_integration():
+    auth_service, message_service, container = await get_services()
 
     try:
         # register two users
-        data_1 = await auth_service.register(fake_user_1)
-        data_2 = await auth_service.register(fake_user_2)
+        user1_data = await auth_service.register(fake_user_1 + "_postgres")
+        user2_data = await auth_service.register(fake_user_2 + "_postgres")
 
-        # login as user 1
-        login_1 = await auth_service.login(data_1["username"], data_1["ecdsa_private_key"])
+        # login first user
+        login_1 = await auth_service.login(user1_data["username"], user1_data["ecdsa_private_key"])
         token_1 = login_1["access_token"]
 
-        # get user 2's public keys
-        keys_2 = await auth_service.get_public_keys(data_2["id"])
+        # get public keys for second user
+        keys_2 = await auth_service.get_public_keys(user2_data["id"])
         ecdh_public_key_2 = keys_2["ecdh_public_key"]
 
-        # send encrypted message from user 1 to user 2
-        message_text = "Hello, this is an encrypted message!"
+        # preparing long polling for user 2
+        login_2 = await auth_service.login(user2_data["username"], user2_data["ecdsa_private_key"])
+        token_2 = login_2["access_token"]
+
+        keys_1 = await auth_service.get_public_keys(user1_data["id"])
+        ecdh_public_key_1 = keys_1["ecdh_public_key"]
+
+        received_messages = []
+        message_received = asyncio.Event()
+
+        async def message_callback(decrypted_message):
+            received_messages.append(decrypted_message)
+            message_received.set()
+
+        sender_public_keys = {user1_data["id"]: ecdh_public_key_1}
+
+        # run polling BEFORE sending a message (simulating a real scenario)
+        polling_task = asyncio.create_task(
+            message_service.start_message_polling(
+                token=token_2,
+                user_private_key=user2_data["ecdh_private_key"],
+                sender_public_keys=sender_public_keys,
+                message_callback=message_callback
+            )
+        )
+
+        # give polling time to connect to the channel
+        await asyncio.sleep(1)
+
+        # send a message - this should trigger NOTIFY in PostgreSQL
+        original_message = "Test PostgreSQL LISTEN/NOTIFY message"
         send_result = await message_service.send_encrypted_message(
-            recipient_id=data_2["id"],
-            message=message_text,
-            sender_private_key=data_1["ecdh_private_key"],
+            recipient_id=user2_data["id"],
+            message=original_message,
+            sender_private_key=user1_data["ecdh_private_key"],
             recipient_public_key=ecdh_public_key_2,
             token=token_1
         )
 
         assert "id" in send_result
 
-        # Login as user 2
-        login_2 = await auth_service.login(data_2["username"], data_2["ecdsa_private_key"])
-        token_2 = login_2["access_token"]
+        # wait for a message to be received via the NOTIFY mechanism
+        try:
+            await asyncio.wait_for(message_received.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            pytest.fail("Message not received via PostgreSQL NOTIFY within timeout")
 
-        keys_1 = await auth_service.get_public_keys(data_1["id"])
-        ecdh_public_key_1 = keys_1["ecdh_public_key"]
+        # stop polling
+        await message_service.stop_message_polling()
+        await asyncio.sleep(0.5)
 
-        # receive messages as user 2
-        receive_result = await message_service.receive_messages(
-            last_message_id=0,
-            timeout=30,
-            token=token_2
-        )
+        # check that the message was received and decrypted correctly.
+        assert len(received_messages) > 0
 
-        assert receive_result["has_messages"] == True
-        assert len(receive_result["messages"]) > 0
-
-        # decrypt each received message
-        decrypted_messages = []
-        for encrypted_message in receive_result["messages"]:
-            encrypted_content = encrypted_message.get("message")
-
-            if encrypted_content:
-                try:
-                    decrypted_text = await message_service.decrypt_message(
-                        encrypted_message=encrypted_content,  # base64
-                        user_private_key=data_2["ecdh_private_key"],
-                        sender_public_key=ecdh_public_key_1
-                    )
-
-                    decrypted_messages.append({
-                        "id": encrypted_message["id"],
-                        "decrypted_content": decrypted_text,
-                        "status": "success"
-                    })
-
-                    # verify the decrypted message matches the original
-                    assert decrypted_text == message_text
-
-                except Exception as e:
-                    decrypted_messages.append({
-                        "id": encrypted_message["id"],
-                        "decrypted_content": None,
-                        "status": "failed",
-                        "error": str(e)
-                    })
-            else:
-                decrypted_messages.append({
-                    "id": encrypted_message["id"],
-                    "decrypted_content": None,
-                    "status": "not_encrypted"
-                })
-
-        # verify we have at least one successfully decrypted message
-        success_decryptions = [msg for msg in decrypted_messages if msg["status"] == "success"]
-        assert len(success_decryptions) > 0, "No messages were successfully decrypted"
-
-        # acknowledge the messages
-        message_ids = [msg["id"] for msg in receive_result["messages"]]
-        ack_result = await message_service.acknowledge_messages(message_ids, token_2)
-        assert "status" in ack_result
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        pytest.fail(f"Test failed with error: {str(e)}")
-    finally:
-        await close_container(container)
-
-
-@pytest.mark.asyncio
-async def test_batch_decrypt_messages():
-    auth_service, message_service, container = await get_service()
-
-    try:
-        # register two users
-        data_1 = await auth_service.register(fake_user_1 + "_batch")
-        data_2 = await auth_service.register(fake_user_2 + "_batch")
-
-        # login as user 1
-        login_1 = await auth_service.login(data_1["username"], data_1["ecdsa_private_key"])
-        token_1 = login_1["access_token"]
-
-        # get user 2's public keys
-        keys_2 = await auth_service.get_public_keys(data_2["id"])
-        ecdh_public_key_2 = keys_2["ecdh_public_key"]
-
-        # send multiple encrypted messages
-        messages_to_send = [
-            "First test message",
-            "Second test message",
-            "Third test message"
+        success_messages = [
+            msg for msg in received_messages
+            if msg.get("decryption_status") == "success"
         ]
 
-        for msg_text in messages_to_send:
-            await message_service.send_encrypted_message(
-                recipient_id=data_2["id"],
-                message=msg_text,
-                sender_private_key=data_1["ecdh_private_key"],
-                recipient_public_key=ecdh_public_key_2,
-                token=token_1
-            )
-
-        # login as user 2
-        login_2 = await auth_service.login(data_2["username"], data_2["ecdsa_private_key"])
-        token_2 = login_2["access_token"]
-
-        # get user 1's public keys
-        keys_1 = await auth_service.get_public_keys(data_1["id"])
-        ecdh_public_key_1 = keys_1["ecdh_public_key"]
-
-        # receive messages
-        receive_result = await message_service.receive_messages(
-            last_message_id=0,
-            timeout=30,
-            token=token_2
-        )
-
-        assert receive_result["has_messages"] == True
-        assert len(receive_result["messages"]) >= len(messages_to_send)
-
-        # test batch decryption
-        sender_public_keys = {
-            data_1["id"]: ecdh_public_key_1
-        }
-
-        batch_result = await message_service.batch_decrypt_messages(
-            encrypted_messages=receive_result["messages"],
-            user_private_key=data_2["ecdh_private_key"],
-            sender_public_keys=sender_public_keys
-        )
-
-        # verify all messages were processed
-        assert len(batch_result) == len(receive_result["messages"])
-
-        # check decryption status
-        success_count = sum(1 for msg in batch_result if msg.get("decryption_status") == "success")
-
-        assert success_count >= len(messages_to_send)
+        assert len(success_messages) > 0
+        assert success_messages[0]["decrypted_content"] == original_message
+        assert success_messages[0]["sender_id"] == user1_data["id"]
+        assert success_messages[0]["recipient_id"] == user2_data["id"]
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        pytest.fail(f"Batch decrypt test failed with error: {str(e)}")
+        pytest.fail(f"PostgreSQL LISTEN/NOTIFY test failed with error: {str(e)}")
     finally:
         await close_container(container)
