@@ -5,7 +5,7 @@ import asyncio
 from .auth_manager import AuthManager
 from src.presentation.pages import AppState
 
-# Конфигурация стилей
+# Style configuration
 COLOR_ACCENT = "#FFFFFF"
 COLOR_TEXT = "#00FFFF"
 COLOR_INPUT_BG = "#282F32"
@@ -20,17 +20,17 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.bgcolor = "#000000"
 
-    # Инициализация менеджера аутентификации
+    # Initializing the authentication manager
     auth_manager = AuthManager(app_state)
 
-    # Элементы состояния UI
+    # UI State Elements
     status_text = ft.Text("", color=COLOR_TEXT, size=14, font_family=FONT_FAMILY)
     progress_indicator = ft.Container(
         height=2, width=0, bgcolor=COLOR_ACCENT,
         animate_size=ft.Animation(1000, "easeOut")
     )
 
-    # Анимация загрузки
+    # Loading animation
     loading_animation = ft.Row([
         ft.Text(">", color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
         ft.Text("_", color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY,
@@ -46,10 +46,10 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
             page.update()
             await asyncio.sleep(0.5)
 
-    # Запускаем анимацию курсора
+    # Start the cursor animation
     asyncio.create_task(blink_cursor())
 
-    # Заголовок системы
+    # System Title
     title = ft.Container(
         content=ft.Column([
             ft.Text("APATA ENCRYPTED SYSTEMS VER 0.1", color=COLOR_ACCENT, size=15, font_family=FONT_FAMILY),
@@ -62,7 +62,7 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
         ]), margin=ft.margin.only(bottom=30)
     )
 
-    # Поля ввода
+    # Input fields
     username_field = ft.TextField(
         label="username", value="",
         text_style=ft.TextStyle(size=18, color=COLOR_TEXT, font_family=FONT_FAMILY),
@@ -82,7 +82,11 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
     )
 
     async def on_auth_click(e):
-        """Универсальный обработчик аутентификации"""
+        """
+        Generic authentication handler
+        :param e:
+        :return:
+        """
         username = username_field.value.strip()
         password = password_field.value.strip()
 
@@ -90,18 +94,18 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
             update_status("ERROR: CREDENTIALS REQUIRED", COLOR_ERROR)
             return
 
-        # Блокируем UI
+        # Block the UI
         set_ui_loading(True)
         update_status("INITIATING SECURE HANDSHAKE...", COLOR_TEXT)
         progress_indicator.width = 200
         page.update()
 
         try:
-            # Настройка сервисов если необходимо
+            # Configure services if necessary
             if not await auth_manager.setup_services():
                 raise Exception("Service initialization failed")
 
-            # Выполняем аутентификацию
+            # Perform authentication
             success, message = await auth_manager.authenticate_user(username, password)
 
             if success:
@@ -110,7 +114,7 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
                 progress_indicator.width = 400
                 page.update()
 
-                # Задержка перед переходом
+                # Delay before transition
                 await asyncio.sleep(1.5)
                 change_screen("messenger")
             else:
@@ -122,13 +126,22 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
             set_ui_loading(False)
 
     def update_status(message: str, color: str):
-        """Обновление статусного сообщения"""
+        """
+        Updating the status message
+        :param message:
+        :param color:
+        :return:
+        """
         status_text.value = message
         status_text.color = color
         page.update()
 
     def set_ui_loading(loading: bool):
-        """Установка состояния загрузки UI"""
+        """
+        Setting the UI loading state
+        :param loading:
+        :return:
+        """
         login_button.disabled = loading
         username_field.disabled = loading
         password_field.disabled = loading
@@ -136,7 +149,7 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
         if not loading:
             progress_indicator.width = 0
 
-    # Кнопка аутентификации
+    # Authentication button
     login_button = ft.ElevatedButton(
         "[ ACCESS GRANT ]",
         on_click=on_auth_click,
@@ -147,7 +160,7 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
         )
     )
 
-    # Основной контейнер
+    # Main container
     login_menu_container = ft.Container(
         content=ft.Column([
             ft.Text("PLEASE, ENTER YOUR CREDENTIALS", color=COLOR_ACCENT, size=18,
@@ -162,14 +175,14 @@ def login_interface(page, change_screen, app_state: AppState, **kwargs):
         border_radius=ft.border_radius.all(3), width=450,
     )
 
-    # Главный layout
+    # Main layout
     main_layout = ft.Container(
         content=ft.Column([title, login_menu_container],
                           horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
         padding=20
     )
 
-    # Очищаем и добавляем на страницу
+    # Clean and add to the page
     page.clean()
     page.add(main_layout)
     username_field.focus()
