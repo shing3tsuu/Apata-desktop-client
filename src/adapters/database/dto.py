@@ -6,8 +6,6 @@ class LocalUserDTO(BaseModel):
     server_user_id: int
     username: str
     hashed_password: str
-    ecdsa_public_key: str
-    ecdh_public_key: str
 
 class LocalUserRequestDTO(LocalUserDTO):
     id: int
@@ -33,3 +31,4 @@ class MessageDTO(BaseModel):
 class MessageRequestDTO(MessageDTO):
 
     id: int
+
