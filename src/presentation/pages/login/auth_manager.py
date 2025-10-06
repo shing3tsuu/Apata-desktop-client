@@ -32,7 +32,7 @@ class AuthManager:
                 self.state.local_user_dao = await request_container.get(LocalUserService)
                 self.state.key_storage = await request_container.get(EncryptedKeyStorage)
 
-            # Проверяем, что все сервисы инициализированы
+            # Check that all services are initialized
             required_services = [
                 self.state.auth_service,
                 self.state.password_hasher,
@@ -239,3 +239,4 @@ class AuthManager:
             self.logger.warning(f"Logout error: {e}")
             self.state.clear()
             return False
+
