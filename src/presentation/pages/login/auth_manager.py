@@ -13,14 +13,15 @@ from src.adapters.encryption.storage import EncryptedKeyStorage
 
 
 class AuthManager:
-    """Улучшенный менеджер аутентификации с обработкой ошибок"""
-
     def __init__(self, app_state):
         self.state = app_state
         self.logger = logging.getLogger(__name__)
 
     async def setup_services(self) -> bool:
-        """Настройка всех необходимых сервисов с обработкой ошибок"""
+        """
+        Setting up all necessary services with error handling
+        :return:
+        """
         try:
 
             self.state._container = make_async_container(AppProvider())
@@ -50,16 +51,18 @@ class AuthManager:
             self.logger.error(f"Service setup failed: {e}")
             return False
 
-    async def authenticate_user(self, username: str, password: str) -> Tuple[bool, str]:
+    async def authenticate_user(self, username: str, password: str) -> tuple[bool, str]:
         """
-        Универсальная аутентификация с улучшенной обработкой ошибок
+        Universal authentication with improved error handling
+        :param username:
+        :param password:
+        :return:
         """
-
         if not username or not password:
             return False, "Username and password are required"
 
         try:
-            # Проверяем наличие пользователя в локальной БД
+            # Check if the user exists in the local database
             local_user = await self.state.local_user_dao.get_user_data()
 
             if local_user is None:
@@ -75,14 +78,19 @@ class AuthManager:
             return False, error_msg
 
     async def _register_new_user(self, username: str, password: str) -> Tuple[bool, str]:
-        """Регистрация нового пользователя с проверками"""
+        """
+        New user registration with checks
+        :param username:
+        :param password:
+        :return:
+        """
         self.logger.info(f"Starting registration for user: {username}")
 
         try:
-            # 1. Регистрация на сервере
+            # 1. Register on the server
             register_data = await self.state.auth_service.register(username=username)
 
-            # Проверяем данные регистрации
+            # Checking registration data
             if not register_data or register_data["username"] != username:
                 return False, "Registration failed - invalid response from server"
 
@@ -92,7 +100,7 @@ class AuthManager:
             if not ecdh_private_key or not ecdsa_private_key:
                 return False, "Registration failed - missing private keys"
 
-            # 2. Сохранение ключей в защищенное хранилище
+            # 2. Saving keys in a secure storage
             if not await self.state.key_storage.register_master_key(username=username, password=password):
                 return False, "Failed to register master key"
 
@@ -110,7 +118,7 @@ class AuthManager:
             ):
                 return False, "Failed to store ECDSA private key"
 
-            # 3. Логин на сервере
+            # 3. Login to the server
             login_data = await self.state.auth_service.login(
                 username=username,
                 ecdsa_private_key=ecdsa_private_key
@@ -121,7 +129,7 @@ class AuthManager:
 
             data = await self.state.auth_service.get_current_user_info()
 
-            # 5. Сохранение в локальную БД
+            # 5. Saving to a local database
             hashed_password = await self.state.password_hasher.hashing(password)
 
             user_dto = LocalUserDTO(
@@ -132,7 +140,7 @@ class AuthManager:
 
             await self.state.local_user_dao.add_user(user_dto)
 
-            # 6. Обновление состояния
+            # 6. Status Update
             self.state.update_from_login(
                 username=username,
                 ecdsa_private_key=ecdsa_private_key,
@@ -154,11 +162,17 @@ class AuthManager:
             return False, error_msg
 
     async def _login_existing_user(self, username: str, password: str, local_user) -> Tuple[bool, str]:
-        """Логин существующего пользователя с проверками"""
+        """
+        Login of an existing user with checks
+        :param username:
+        :param password:
+        :param local_user:
+        :return:
+        """
         self.logger.info(f"Attempting login for user: {username}")
 
         try:
-            # 1. Проверка пароля
+            # 1. Password verification
             password_valid = await self.state.password_hasher.compare(password, local_user.hashed_password)
             if not password_valid:
                 return False, "Invalid password"
@@ -166,13 +180,12 @@ class AuthManager:
             if local_user.username != username:
                 return False, "Username does not match local user"
 
-            # 2. Получение приватных ключей из хранилища
+            # 2. Getting private keys from storage
             ecdsa_private_key = await self.state.key_storage.get_ecdsa_private_key(username, password)
-            print(f"ecdsa_private_key: {ecdsa_private_key}")
             if not ecdsa_private_key:
                 return False, "Failed to retrieve private keys - invalid password or corrupted data"
 
-            # 3. Логин на сервере
+            # 3. Login to the server
             login_data = await self.state.auth_service.login(
                 username=username,
                 ecdsa_private_key=ecdsa_private_key
@@ -183,12 +196,12 @@ class AuthManager:
 
             data = await self.state.auth_service.get_current_user_info()
 
-            # 4. Получение ECDH ключа для мессенджера
+            # 4. Obtaining an ECDH key for the messenger
             ecdh_private_key = await self.state.key_storage.get_ecdh_private_key(username, password)
             if not ecdh_private_key:
                 self.logger.warning("ECDH private key not found, but login successful")
 
-            # 5. Обновление состояния
+            # 5. Status update
             self.state.update_from_login(
                 username=username,
                 ecdsa_private_key=ecdsa_private_key,
@@ -210,7 +223,10 @@ class AuthManager:
             return False, error_msg
 
     async def logout(self) -> bool:
-        """Выход из системы с очисткой"""
+        """
+        Logout with cleaning
+        :return:
+        """
         try:
             if self.state.auth_service and self.state.is_authenticated:
                 await self.state.auth_service.logout()
@@ -221,5 +237,5 @@ class AuthManager:
 
         except Exception as e:
             self.logger.warning(f"Logout error: {e}")
-            self.state.clear()  # Все равно очищаем состояние
+            self.state.clear()
             return False
