@@ -17,8 +17,6 @@ class LocalUser(Base):
     server_user_id: Mapped[int] = mapped_column(BigInteger)  # ID on server
     username: Mapped[str] = mapped_column(String(50))
     hashed_password: Mapped[str] = mapped_column(String(100), nullable=False) # bcrypt hashed password
-    ecdsa_public_key: Mapped[str] = mapped_column(Text)
-    ecdh_public_key: Mapped[str] = mapped_column(Text)
 
 class Contact(Base):
     __tablename__ = "contacts"
@@ -63,5 +61,6 @@ class Message(Base):
         back_populates="messages",
         foreign_keys=[contact_id]
     )
+
 
 
