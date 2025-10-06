@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidTag
 import logging
-from typing import Tuple
+from typing import Tuple, Optional
 import secrets
 
 
@@ -16,6 +16,10 @@ class KeyManager:
         self.logger = logger or logging.getLogger(__name__)
 
     def derive_key_from_password(self, password: str, salt: bytes, iterations: int | None = None) -> bytes:
+        """Создание ключа из пароля с проверкой входных данных"""
+        if not password or not salt:
+            raise ValueError("Password and salt cannot be empty")
+
         if iterations is None:
             iterations = self.iterations
 
@@ -26,14 +30,18 @@ class KeyManager:
             iterations=iterations,
             backend=default_backend()
         )
-        return kdf.derive(password.encode())
+        return kdf.derive(password.encode('utf-8'))
 
     async def generate_master_key(self) -> bytes:
         """Generate a random 256-bit master key"""
         return secrets.token_bytes(32)
 
-    async def encrypt_with_master_key(self, data: bytes, master_key: bytes) -> bytes:
+    async def encrypt_with_master_key(self, data: bytes, master_key: bytes) -> Optional[bytes]:
         """Encrypt data using AES-GCM with master key"""
+        if not data or not master_key:
+            self.logger.error("Cannot encrypt: data or master key is empty")
+            return None
+
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, self._encrypt_with_master_key, data, master_key)
@@ -42,6 +50,9 @@ class KeyManager:
             return None
 
     def _encrypt_with_master_key(self, data: bytes, master_key: bytes) -> bytes:
+        if len(master_key) != 32:
+            raise ValueError("Master key must be 32 bytes")
+
         nonce = os.urandom(12)
         cipher = Cipher(
             algorithms.AES(master_key),
@@ -52,8 +63,12 @@ class KeyManager:
         ciphertext = encryptor.update(data) + encryptor.finalize()
         return nonce + encryptor.tag + ciphertext
 
-    async def decrypt_with_master_key(self, encrypted_data: bytes, master_key: bytes) -> bytes:
+    async def decrypt_with_master_key(self, encrypted_data: bytes, master_key: bytes) -> Optional[bytes]:
         """Decrypt data using AES-GCM with master key"""
+        if not encrypted_data or not master_key:
+            self.logger.error("Cannot decrypt: encrypted data or master key is empty")
+            return None
+
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, self._decrypt_with_master_key, encrypted_data, master_key)
@@ -77,16 +92,20 @@ class KeyManager:
         decryptor = cipher.decryptor()
         return decryptor.update(ciphertext) + decryptor.finalize()
 
-    async def encrypt_master_key(self, master_key: bytes, password: str) -> tuple[bytes, bytes]:
+    async def encrypt_master_key(self, master_key: bytes, password: str) -> Tuple[Optional[bytes], Optional[bytes]]:
         """Encrypt master key with password-derived key"""
+        if not master_key or not password:
+            self.logger.error("Cannot encrypt master key: master key or password is empty")
+            return None, None
+
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, self._encrypt_master_key, master_key, password)
         except Exception as e:
             self.logger.error("Failed to encrypt master key: %s", str(e), exc_info=True)
-            return None
+            return None, None
 
-    def _encrypt_master_key(self, master_key: bytes, password: str) -> tuple[bytes, bytes]:
+    def _encrypt_master_key(self, master_key: bytes, password: str) -> Tuple[bytes, bytes]:
         salt = os.urandom(16)
         key = self.derive_key_from_password(password, salt)
 
@@ -102,8 +121,12 @@ class KeyManager:
         encrypted_data = nonce + encryptor.tag + ciphertext
         return encrypted_data, salt
 
-    async def decrypt_master_key(self, encrypted_master_key: bytes, password: str, salt: bytes) -> bytes:
+    async def decrypt_master_key(self, encrypted_master_key: bytes, password: str, salt: bytes) -> Optional[bytes]:
         """Decrypt master key with password"""
+        if not encrypted_master_key or not password or not salt:
+            self.logger.error("Cannot decrypt master key: missing required parameters")
+            return None
+
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, self._decrypt_master_key, encrypted_master_key, password, salt)
@@ -132,31 +155,3 @@ class KeyManager:
             return decryptor.update(ciphertext) + decryptor.finalize()
         except InvalidTag:
             raise ValueError("Invalid password or corrupted data")
-
-    # Maintaining backward compatibility
-    async def encrypt_private_key(self, private_key_pem: bytes, password: str, salt: bytes | None = None) -> bytes:
-        """Legacy method for direct encryption"""
-        master_key = await self.generate_master_key()
-        encrypted_data = await self.encrypt_with_master_key(private_key_pem, master_key)
-        encrypted_master_key, salt = await self.encrypt_master_key(master_key, password)
-
-        # Format: salt + encrypted_master_key + encrypted_data
-        return salt + encrypted_master_key + encrypted_data
-
-    async def decrypt_private_key(self, encrypted_data: bytes, password: str) -> bytes:
-        """Legacy method for direct decryption"""
-        if len(encrypted_data) < 16 + 28:  # salt (16) + minimal encrypted_master_key (28)
-            raise ValueError("Invalid encrypted data")
-
-        salt = encrypted_data[:16]
-        remaining_data = encrypted_data[16:]
-
-        # The encrypted_master_key has structure: nonce(12) + tag(16) + ciphertext(32) = 60 bytes
-        encrypted_master_key = remaining_data[:60]
-        encrypted_private_key = remaining_data[60:]
-
-        master_key = await self.decrypt_master_key(encrypted_master_key, password, salt)
-        if master_key is None:
-            return None
-
-        return await self.decrypt_with_master_key(encrypted_private_key, master_key)
