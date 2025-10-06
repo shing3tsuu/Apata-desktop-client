@@ -8,10 +8,14 @@ class LocalUserService:
         self._common_dao = common_dao
 
     async def add_user(self, user: LocalUserRequestDTO) -> LocalUserDTO:
-        return await self._local_user_dao.add_user(user)
+        result = await self._local_user_dao.add_user(user)
+        await self._common_dao.commit()
+        return result
 
     async def get_user_data(self) -> LocalUserDTO | None:
         return await self._local_user_dao.get_user_data()
 
     async def update_user_data(self, user: LocalUserDTO) -> LocalUserDTO | None:
-        return await self._local_user_dao.update_user_data(user)
+        result = await self._local_user_dao.update_user_data(user)
+        await self._common_dao.commit()
+        return result
