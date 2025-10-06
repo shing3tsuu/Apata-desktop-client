@@ -27,6 +27,7 @@ from src.adapters.encryption.service import (
     AbstractPasswordHasher, BcryptPasswordHasher,
     KeyManager
 )
+from src.adapters.encryption.storage import EncryptedKeyStorage
 
 class AppProvider(Provider):
     scope = Scope.APP
@@ -57,6 +58,13 @@ class AppProvider(Provider):
     @provide(scope=Scope.REQUEST)
     async def key_manager(self, logger: logging.Logger) -> KeyManager:
         return KeyManager(iterations=600000, logger=logger)
+
+    @provide(scope=Scope.REQUEST)
+    async def key_storage(self, key_manager: KeyManager, logger: logging.Logger) -> EncryptedKeyStorage:
+        return EncryptedKeyStorage(
+            key_manager=key_manager,
+            logger=logger,
+        )
 
     @provide(scope=Scope.APP)
     async def api_client(self) -> CommonHTTPClient:
@@ -129,16 +137,31 @@ class AppProvider(Provider):
 
     @provide(scope=Scope.APP)
     async def database(self) -> async_sessionmaker:
-        engine = create_async_engine(
-            "sqlite+aiosqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-        )
+        try:
+            database_url = "sqlite+aiosqlite:///apata.db"
 
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            engine = create_async_engine(
+                database_url,
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+                echo=True
+            )
 
-        return async_sessionmaker(engine, autoflush=False, expire_on_commit=False)
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+
+            logging.info("Database tables created successfully")
+
+            return async_sessionmaker(
+                engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+                autoflush=False
+            )
+
+        except Exception as e:
+            logging.error(f"Failed to create database: {e}")
+            raise
 
     @provide(scope=Scope.REQUEST)
     async def new_connection(self, sessionmaker: async_sessionmaker) -> AsyncIterable[AsyncSession]:
