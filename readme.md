@@ -41,7 +41,7 @@ Technical Features
 
     Dependency Injection with Dishka
 
-    RESTful API Client with retry logic
+    RESTful API Client with retry logic (httpx)
 
     Modular Service Layer architecture
 
@@ -212,5 +212,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
     Advanced contact management
 
 Disclaimer: This is a beta version for educational and development purposes. Always conduct security audits before production use.
+
 
 
