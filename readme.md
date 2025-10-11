@@ -2,10 +2,6 @@ APATA - Encrypted Messenger
 
 A secure, end-to-end encrypted messaging application built with Python and Flet, featuring military-grade encryption and a sleek terminal-style interface.
 
-https://img.shields.io/badge/APATA-Encrypted_Messenger-blue
-https://img.shields.io/badge/Python-3.8+-green
-https://img.shields.io/badge/Flet-GUI_Framework-orange
-https://img.shields.io/badge/License-MIT-lightgrey
 🛡️ Features
 Security & Encryption
 
@@ -212,6 +208,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
     Advanced contact management
 
 Disclaimer: This is a beta version for educational and development purposes. Always conduct security audits before production use.
+
 
 
 
