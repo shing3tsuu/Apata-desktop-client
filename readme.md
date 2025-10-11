@@ -52,32 +52,7 @@ Prerequisites
 
     pip (Python package manager)
 
-Installation
-
-    Clone the repository
-    bash
-
-git clone https://github.com/yourusername/apata-messenger.git
-cd apata-messenger
-
-Create virtual environment
-bash
-
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-Install dependencies
-bash
-
-pip install -r requirements.txt
-
-Run the application
-bash
-
-python src/main.py
-
 📁 Project Structure
-text
 
 apata-messenger/
 ├── src/
@@ -101,16 +76,8 @@ apata-messenger/
 ├── requirements.txt
 └── README.md
 
-🔧 Configuration
-Database
-
 The application uses SQLite by default. The database file (apata.db) is automatically created in the application directory.
 Server Configuration
-
-Update the API base URL in app.py if connecting to a different server:
-python
-
-base_url="http://127.0.0.1:8000/"  # Change to your server URL
 
 Encryption Settings
 
@@ -279,3 +246,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
     Advanced contact management
 
 Disclaimer: This is a beta version for educational and development purposes. Always conduct security audits before production use.
+
