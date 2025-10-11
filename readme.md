@@ -45,40 +45,6 @@ Technical Features
 
     Modular Service Layer architecture
 
-🚀 Quick Start
-Prerequisites
-
-    Python 3.8 or higher
-
-    pip (Python package manager)
-
-📁 Project Structure
-
-apata-messenger/
-├── src/
-│   ├── adapters/
-│   │   ├── api/                 # HTTP API clients and services
-│   │   │   ├── dao/             # Data Access Objects for API
-│   │   │   └── service/         # API service layer
-│   │   ├── database/            # Database layer
-│   │   │   ├── dao/             # Data Access Objects
-│   │   │   ├── service/         # Database services
-│   │   │   └── structures.py    # SQLAlchemy models
-│   │   └── encryption/          # Cryptography components
-│   │       ├── service/         # Encryption services
-│   │       └── storage/         # Secure key storage
-│   ├── presentation/
-│   │   └── pages/               # Flet UI interfaces
-│   │       ├── login/           # Authentication interface
-│   │       └── loading/         # Loading screen
-│   ├── providers/               # Dependency injection
-│   └── main.py                  # Application entry point
-├── requirements.txt
-└── README.md
-
-The application uses SQLite by default. The database file (apata.db) is automatically created in the application directory.
-Server Configuration
-
 Encryption Settings
 
 Key derivation iterations and algorithms can be configured in the respective service files.
@@ -246,4 +212,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
     Advanced contact management
 
 Disclaimer: This is a beta version for educational and development purposes. Always conduct security audits before production use.
+
 
