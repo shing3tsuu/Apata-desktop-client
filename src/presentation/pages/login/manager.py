@@ -42,7 +42,7 @@ class AuthManager:
             ]
 
             if any(service is None for service in required_services):
-                self.logger.error("Some services failed to initialize")
+                self.logger.critical("Some services failed to initialize")
                 return False
 
             self.logger.info("All services initialized successfully")
@@ -113,19 +113,19 @@ class AuthManager:
             if not await self.state.key_storage.register_master_key(username=username, password=password):
                 return False, "Failed to register master key"
 
+            if not await self.state.key_storage.store_ecdsa_private_key(
+                    username=username,
+                    private_key_pem=ecdsa_private_key,
+                    password=password
+            ):
+                return False, "Failed to store ECDSA private key"
+
             if not await self.state.key_storage.store_ecdh_private_key(
                     username=username,
                     ecdh_private_key=ecdh_private_key,
                     password=password
             ):
                 return False, "Failed to store ECDH private key"
-
-            if not await self.state.key_storage.store_ecdsa_private_key(
-                    username=username,
-                    password=password,
-                    private_key_pem=ecdsa_private_key
-            ):
-                return False, "Failed to store ECDSA private key"
 
             # 3. Login to the server
             login_data = await self.state.auth_http_service.login(
@@ -141,7 +141,7 @@ class AuthManager:
             # 5. Saving to a local database
             hashed_password = await self.state.password_hasher.hashing(password)
 
-            user_dto = LocalUserDTO(
+            user_dto = LocalUserRequestDTO(
                 server_user_id=data["id"],
                 username=username,
                 hashed_password=hashed_password
@@ -154,11 +154,12 @@ class AuthManager:
             # 6. Status Update
             self.state.update_from_login(
                 username=username,
+                user_id=data["id"],
+                password=password,
                 master_key=master_key,
                 ecdsa_private_key=ecdsa_private_key,
                 ecdh_private_key=ecdh_private_key,
                 token=login_data["access_token"],
-                user_id=data["id"]
             )
 
             self.logger.info(f"Registration successful for user: {username}")
@@ -222,11 +223,12 @@ class AuthManager:
             # 5. Status update
             self.state.update_from_login(
                 username=username,
+                user_id=data["id"],
+                password=password,
                 master_key=master_key,
                 ecdsa_private_key=ecdsa_private_key,
                 ecdh_private_key=ecdh_private_key,
                 token=login_data["access_token"],
-                user_id=data["id"],
             )
 
             self.logger.info(f"Login successful for user: {username}")

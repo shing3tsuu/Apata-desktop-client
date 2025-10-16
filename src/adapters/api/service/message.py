@@ -32,8 +32,7 @@ class MessageHTTPService:
             recipient_id: int,
             message: str,
             sender_private_key: str,
-            recipient_public_key: str,
-            token: str
+            recipient_public_key: str
     ) -> dict[str, Any]:
         """
         Sending an encrypted message
@@ -41,7 +40,6 @@ class MessageHTTPService:
         :param message: Message text
         :param sender_private_key: Sender's private key
         :param recipient_public_key: Recipient's public key
-        :param token: Authentication token
         :return: Sending result
         """
         try:
@@ -55,8 +53,7 @@ class MessageHTTPService:
             # Send the encrypted message
             result = await self._message_dao.send_message(
                 recipient_id=recipient_id,
-                message=encrypted_message,
-                token=token
+                message=encrypted_message
             )
 
             self._logger.info(f"Encrypted message sent to {recipient_id}")
@@ -70,10 +67,15 @@ class MessageHTTPService:
             self,
             user_private_key: str,
             sender_public_keys: dict[int, str] | None, # Key cache for optimization
-            token: str
     ) -> list[dict[str, Any]]:
+        """
+        Fetch undelivered messages
+        :param user_private_key:
+        :param sender_public_keys:
+        :return:
+        """
         # Fetch undelivered messages
-        response = await self._message_dao.get_undelivered_messages(token=token)
+        response = await self._message_dao.get_undelivered_messages()
 
         if response.get("has_messages") and response.get("messages"):
             encrypted_messages = response["messages"]
@@ -138,6 +140,14 @@ class MessageHTTPService:
             sender_public_keys: dict[int, str] | None, # Key cache for optimization
             message_callback: callable
     ):
+        """
+        Start message polling
+        :param token:
+        :param user_private_key:
+        :param sender_public_keys:
+        :param message_callback:
+        :return:
+        """
         if self._is_polling:
             self._logger.warning("Polling is already running")
             return
@@ -159,7 +169,7 @@ class MessageHTTPService:
         """
         while self._is_polling:
             try:
-                response = await self._message_dao.poll_messages(timeout=30, token=self._current_token)
+                response = await self._message_dao.poll_messages(timeout=30)
 
                 if response.get("has_messages") and response.get("messages"):
                     encrypted_messages = response["messages"]
@@ -214,7 +224,7 @@ class MessageHTTPService:
 
                     # Confirm all processed messages
                     if message_ids:
-                        await self._message_dao.ack_messages(message_ids, self._current_token)
+                        await self._message_dao.ack_messages(message_ids)
 
             except asyncio.CancelledError:
                 break
@@ -248,6 +258,5 @@ class MessageHTTPService:
         """
         return {
             "is_polling": self._is_polling,
-            "has_token": self._current_token is not None,
             "task_running": self._polling_task is not None and not self._polling_task.done()
         }

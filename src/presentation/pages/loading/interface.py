@@ -356,14 +356,14 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
 
             try:
                 # Executing a method
-                success = await step_method(**step_params)
+                success, message = await step_method(**step_params)
 
                 if success:
                     await add_step_status(step_name, "completed")
                 else:
                     await add_step_status(step_name, "error")
                     await show_error(f"Failed to execute: {step_name}")
-                    return  # Terminate the process on error
+                    raise Exception(message)
 
             except Exception as e:
                 await add_step_status(step_name, "error")

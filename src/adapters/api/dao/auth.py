@@ -177,6 +177,8 @@ class AuthHTTPDAO:
         if not self._current_token:
             raise ValueError("No authentication token available")
 
+        self._http_client.set_auth_token(_current_token)
+
         data = {"ecdsa_public_key": ecdsa_public_key}
         self._logger.info("Updating ECDSA public key")
 

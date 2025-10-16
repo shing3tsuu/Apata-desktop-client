@@ -37,12 +37,13 @@ class Message(BaseModel):
 
 @dataclass
 class AppState:
-    token: str | None = None
     username: str | None = None
     user_id: int | None = None
+    password: str | None = None
     master_key: bytes | None = None
     ecdsa_private_key: str | None = None
     ecdh_private_key: str | None = None
+    token: str | None = None
     is_authenticated: bool = False
 
     auth_http_service: AuthHTTPService = None
@@ -50,6 +51,7 @@ class AppState:
     message_http_service: MessageHTTPService = None
 
     aes_cipher: AbstractAES256Cipher = None
+    ecdh_cipher: AbstractECDHCipher = None
     password_hasher: AbstractPasswordHasher = None
     key_storage: EncryptedKeyStorage = None
 
@@ -69,22 +71,24 @@ class AppState:
 
     def update_from_login(
             self,
-            master_key: bytes,
             username: str,
+            user_id: int,
+            password: str,
+            master_key: bytes,
             ecdsa_private_key: str,
             ecdh_private_key: str,
             token: str,
-            user_id: int
     ):
         self.username = username
+        self.user_id = user_id
+        self.password = password
         self.master_key = master_key
         self.ecdsa_private_key = ecdsa_private_key
         self.ecdh_private_key = ecdh_private_key
         self.token = token
-        self.user_id = user_id
         self.is_authenticated = True
 
-    def update_ecdh_key(self, ecdh_private_key: str):
+    def update_ecdh_private_key(self, ecdh_private_key: str):
         self.ecdh_private_key = ecdh_private_key
 
     def clear(self):
