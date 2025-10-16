@@ -186,7 +186,7 @@ async def login_interface(page, change_screen, app_state: AppState, **kwargs):
 
     # Main layout
     main_layout = ft.Container(
-        content=ft.Column([title, login_menu_container, footer],
+        content=ft.Column([title, login_menu_container, ft.Container(height=152), footer],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
         padding=20
     )

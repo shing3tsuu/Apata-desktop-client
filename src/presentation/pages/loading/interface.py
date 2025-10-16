@@ -58,7 +58,7 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
     connection_lines = ft.Container(
         content=ft.Stack([
             ft.Container(
-                width=100,
+                width=200,
                 height=2,
                 bgcolor=ft.Colors.with_opacity(0.4, COLOR_WARNING),
                 top=40,
@@ -189,7 +189,7 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
     page.clean()
     main_column = ft.Column([
         loading_container,
-        ft.Container(height=10),
+        ft.Container(height=80),
         footer
     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0)
 
@@ -369,9 +369,6 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
                 await add_step_status(step_name, "error")
                 await show_error(f"Error in {step_name}: {str(e)}")
                 return  # Terminate the process on error
-
-            # Delay between steps
-            await asyncio.sleep(uniform(0.3, 0.8))
 
         # Final animation
         await asyncio.sleep(0.5)
