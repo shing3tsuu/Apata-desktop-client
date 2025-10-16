@@ -161,7 +161,7 @@ class AuthHTTPService:
             self._logger.error(f"Error getting public keys: {e}")
             raise
 
-    async def update_keys(self) -> dict[str, Any]:
+    async def update_ecdh_key(self) -> dict[str, Any]:
         """
         Update user's keys
         :return:
@@ -173,17 +173,14 @@ class AuthHTTPService:
 
         try:
             # Generating new keys
-            ecdsa_private, ecdsa_public = await self._ecdsa_signer.generate_key_pair()
             ecdh_private, ecdh_public = await self._ecdh_cipher.generate_key_pair()
 
             # Update keys on server
-            await self._auth_dao.update_ecdsa_key(ecdsa_public)
             await self._auth_dao.update_ecdh_key(ecdh_public)
 
-            self._logger.info("Successfully updated user keys")
+            self._logger.info("Successfully updated user ECDH keys")
 
             return {
-                "ecdsa_private_key": ecdsa_private,
                 "ecdh_private_key": ecdh_private
             }
 

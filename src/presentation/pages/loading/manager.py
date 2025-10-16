@@ -9,6 +9,11 @@ from dishka import make_async_container
 from src.providers import AppProvider
 from src.presentation.pages import AppState
 
+from src.adapters.api.dao import (
+    ContactHTTPDAO,
+    MessageHTTPDAO
+)
+
 from src.adapters.api.service import (
     AuthHTTPService,
     ContactHTTPService,
@@ -27,7 +32,12 @@ from src.adapters.database.dto import (
     MessageRequestDTO, MessageDTO
 )
 
-from src.adapters.encryption.service import AbstractAES256Cipher, AbstractPasswordHasher
+from src.adapters.encryption.service import (
+    AbstractAES256Cipher,
+    AbstractPasswordHasher,
+    AbstractECDHCipher
+)
+
 from src.adapters.encryption.storage import EncryptedKeyStorage
 
 class LoadingManager:
@@ -41,6 +51,8 @@ class LoadingManager:
 
             async with self.state._container() as request_container:
                 # httpx
+                self.state.contact_http_dao = await request_container.get(ContactHTTPDAO)
+                self.state.message_http_dao = await request_container.get(MessageHTTPDAO)
                 self.state.auth_http_service = await request_container.get(AuthHTTPService)
                 self.state.contact_http_service = await request_container.get(ContactHTTPService)
                 self.state.message_http_service = await request_container.get(MessageHTTPService)
@@ -50,29 +62,39 @@ class LoadingManager:
                 self.state.message_service = await request_container.get(MessageService)
                 # cryptography and keyring storage
                 self.state.aes_cipher = await request_container.get(AbstractAES256Cipher)
+                self.state.ecdh_cipher = await request_container.get(AbstractECDHCipher)
                 self.state.key_storage = await request_container.get(EncryptedKeyStorage)
                 self.state.password_hasher = await request_container.get(AbstractPasswordHasher)
 
             # Check that all services are initialized
             required_services = [
+                self.state.contact_http_dao,
+                self.state.message_http_dao,
                 self.state.auth_http_service,
                 self.state.contact_http_service,
                 self.state.message_http_service,
-                self.state.password_hasher,
                 self.state.local_user_service,
-                self.state.key_storage
+                self.state.contact_service,
+                self.state.message_service,
+                self.state.aes_cipher,
+                self.state.ecdh_cipher,
+                self.state.key_storage,
+                self.state.password_hasher
             ]
 
             if any(service is None for service in required_services):
-                self.logger.error("Some services failed to initialize")
-                return False
+                return False, "Some services failed to initialize"
 
-            self.logger.info("All services initialized successfully")
-            return True
+            self.state.auth_http_service.set_token(self.state.token)
+            self.state.contact_http_dao.set_token(self.state.token)
+            self.state.message_http_dao.set_token(self.state.token)
+
+            return True, "All services initialized successfully"
 
         except Exception as e:
-            self.logger.error(f"Service setup failed: {e}")
-            return False
+            error_msg = e
+            self.logger.critical(f"Service setup failed: {error_msg}")
+            return False, error_msg
 
     async def synchronize_contacts(self) -> bool:
         """
@@ -86,13 +108,12 @@ class LoadingManager:
 
             # Get all contacts from server with complete information
             server_contacts = await self.state.contact_http_service.get_contacts(
-                self.state.user_id,
-                self.state.token
+                self.state.user_id
             )
 
             if not server_contacts:
                 self.logger.info("No contacts found on server")
-                return True
+                return True, "No contacts found on server"
 
             # Get local contacts for comparison
             local_contacts = await self.state.contact_service.get_contacts()
@@ -119,11 +140,12 @@ class LoadingManager:
                     self.logger.info(f"Removed local contact: {local_contact.username}")
 
             self.logger.info(f"Successfully synchronized {len(server_contacts)} contacts")
-            return True
+            return True, "Contacts synchronized successfully"
 
         except Exception as e:
-            self.logger.error(f"Contact synchronization failed: {e}")
-            return False
+            error_msg = e
+            self.logger.error(f"Contact synchronization failed: {error_msg}")
+            return False, error_msg
 
     async def sync_message_history(self) -> bool:
         """
@@ -143,12 +165,10 @@ class LoadingManager:
             # Get undelivered messages
             new_messages = await self.state.message_http_service.get_undelivered_messages(
                 user_private_key=self.state.ecdh_private_key,
-                sender_public_keys=self.state.public_keys_cache,
-                token=self.state.token
+                sender_public_keys=self.state.public_keys_cache
             )
             if not new_messages:
-                self.logger.info("No new messages to synchronize")
-                return True
+                return True, "No new messages to synchronize"
             # Adding new messages to local storage and state
             for new_message in new_messages:
                 self.logger.info(f"Adding new message from: {new_message.recipient_id} to local storage...")
@@ -165,6 +185,7 @@ class LoadingManager:
                     new_message.message,
                     self.state.master_key
                 )
+
                 await self.state.message_service.add_message(
                     MessageRequestDTO(
                         server_message_id=new_message.id,
@@ -176,18 +197,38 @@ class LoadingManager:
                         is_delivered=True
                     )
                 )
-            return True
+            return True, "Messages synchronized successfully"
+
         except Exception as e:
-            self.logger.error(f"Get undelivered messages failed: {e}")
-            return False
+            error_msg = e
+            self.logger.error(f"Get undelivered messages failed: {error_msg}")
+            return False, error_msg
 
     async def rotate_keys(self) -> bool:
         try:
             self.logger.info("Rotating keys...")
-            self.logger.info("Deleting old ECDH private key...")
-            self.key_storage.clear_ecdh_key(self.state.username)
 
-            return True
+            response = await self.state.auth_http_service.update_ecdh_key()
+            ecdh_private_key = response["ecdh_private_key"]
+
+            if not ecdh_private_key:
+                return False, "Failed to rotate keys"
+
+            self.state.key_storage.clear_ecdh_private_key(self.state.username)
+
+            if not await self.state.key_storage.store_ecdh_private_key(
+                    username=self.state.username,
+                    ecdh_private_key=ecdh_private_key,
+                    password=self.state.password,
+            ):
+                return False, "Failed to store ECDH private key"
+
+            self.state.update_ecdh_private_key(
+                ecdh_private_key=ecdh_private_key
+            )
+
+            return True, "Keys rotated successfully"
         except Exception as e:
-            self.logger.error(f"Key rotation failed: {e}")
-            return False
+            error_msg = e
+            self.logger.error(f"Key rotation failed: {error_msg}")
+            return False, error_msg

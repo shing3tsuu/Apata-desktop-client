@@ -241,8 +241,8 @@ class EncryptedKeyStorage:
             self.logger.error(f"Failed to get ECDSA private key: {e}")
             return None
 
-    def clear_ecdh_key(self, username: str) -> bool:
-        """Clears the ECDH key from storage."""
+    def clear_ecdh_private_key(self, username: str) -> bool:
+        """Clears the ECDSA and ECDH private keys from storage."""
         if not username:
             self.logger.error("Username is empty")
             return False
