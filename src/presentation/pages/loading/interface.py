@@ -7,7 +7,7 @@ from .manager import LoadingManager
 
 # Style configuration
 COLOR_ACCENT = "#FFFFFF"
-COLOR_TEXT = "#00FFFF"
+COLOR_TEXT = "#FFFFFF"
 COLOR_SUCCESS = "#00FF00"
 COLOR_WARNING = "#FFFFFF"
 COLOR_ERROR = "#FF4444"
@@ -127,49 +127,76 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
         visible=False
     )
 
-    # Main loading container
-    loading_container = ft.Container(
-        content=ft.Column([
-            ft.Container(height=30),
-            # Status header
-            ft.Row([
-                status_indicator,
-                ft.Text("SYSTEM INITIALIZATION ACTIVE",
-                        color=COLOR_WARNING, size=14, font_family=FONT_FAMILY),
-            ], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
-            ft.Container(height=25),
-            # Progress section
-            ft.Column([
-                progress_percentage,
-                ft.Container(height=15),
-                ft.Stack([
-                    progress_bar_background,
-                    progress_bar_fill
-                ]),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.Container(height=30),
-            # Connection visualization
-            connection_lines,
-            ft.Container(height=25),
-            # Status logs
-            ft.Container(
-                content=status_container,
-                height=120,
-                width=450,
-                padding=ft.padding.all(10),
-                bgcolor=ft.Colors.with_opacity(0.05, COLOR_ACCENT),
-                border=ft.border.all(1, ft.Colors.with_opacity(0.1, COLOR_ACCENT)),
-                border_radius=5
-            ),
-            # Error container (initially hidden)
-            error_container
-        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+    background = ft.Container(
+        content=ft.Image(
+            src="loading_background.gif",
+            fit=ft.ImageFit.COVER,
+            width=page.window.width,
+            height=page.window.height,
+            expand=True,
+        ),
+        expand=True,
+    )
+
+    # Main content container with centered alignment
+    main_content = ft.Container(
+        content=ft.Column(
+            [
+                ft.Container(height=30),
+                # Status header
+                ft.Row([
+                    status_indicator,
+                    ft.Text("SYSTEM INITIALIZATION ACTIVE",
+                            color=COLOR_WARNING, size=14, font_family=FONT_FAMILY),
+                ], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Container(height=25),
+                # Progress section
+                ft.Column([
+                    progress_percentage,
+                    ft.Container(height=15),
+                    ft.Stack([
+                        progress_bar_background,
+                        progress_bar_fill
+                    ]),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Container(height=30),
+                # Connection visualization
+                # connection_lines,
+                ft.Container(height=25),
+                # Status logs
+                ft.Container(
+                    content=status_container,
+                    height=120,
+                    width=450,
+                    padding=ft.padding.all(10),
+                    bgcolor=ft.Colors.with_opacity(0.05, COLOR_ACCENT),
+                    border=ft.border.all(1, ft.Colors.with_opacity(0.1, COLOR_ACCENT)),
+                    border_radius=5
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=0
+        ),
         padding=ft.padding.symmetric(vertical=40, horizontal=25),
-        bgcolor="#0A0A0A",
-        border=ft.border.all(1.5, ft.Colors.with_opacity(0.3, COLOR_ACCENT)),
-        border_radius=8,
+        blur=ft.Blur(2, 2, ft.BlurTileMode.REPEATED),
         width=550,
-        height=550
+        height=550,
+        # Center the container
+        alignment=ft.Alignment.CENTER
+    )
+
+    # Main loading container with centered content
+    loading_container = ft.Stack(
+        [
+            background,
+            ft.Container(
+                content=main_content,
+                # This container expands to fill available space and centers its content
+                expand=True,
+                alignment=ft.Alignment.CENTER
+            )
+        ],
+        expand=True,
     )
 
     # Terminal-style footer
@@ -189,9 +216,11 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
     page.clean()
     main_column = ft.Column([
         loading_container,
-        ft.Container(height=80),
         footer
-    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0)
+    ],
+    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+    spacing=0,
+    expand=True)
 
     page.add(main_column)
 
@@ -279,18 +308,14 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
         """
         error_message_text.value = message
         error_container.visible = True
+
+        # Change progress bar color to red on error
+        progress_bar_fill.bgcolor = COLOR_TEXT
+        progress_bar_fill.shadow.color = ft.Colors.with_opacity(0.6, COLOR_TEXT)
+
         status_indicator.bgcolor = COLOR_ERROR
         status_indicator.shadow.color = ft.Colors.with_opacity(0.8, COLOR_ERROR)
 
-        # Update status header
-        status_header = ft.Row([
-            status_indicator,
-            ft.Text("SYSTEM ERROR - INITIALIZATION FAILED",
-                    color=COLOR_ERROR, size=14, font_family=FONT_FAMILY),
-        ], spacing=10, alignment=ft.MainAxisAlignment.CENTER)
-
-        # Updating the status title
-        loading_container.content.controls[1] = status_header
         page.update()
 
     async def hide_error():
@@ -322,14 +347,6 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
         progress_bar_fill.width = 0
         progress_percentage.value = "0%"
         progress_bar_fill.bgcolor = COLOR_TEXT
-
-        # Restoring normal status
-        status_header = ft.Row([
-            status_indicator,
-            ft.Text("SYSTEM INITIALIZATION ACTIVE",
-                    color=COLOR_WARNING, size=14, font_family=FONT_FAMILY),
-        ], spacing=10, alignment=ft.MainAxisAlignment.CENTER)
-        loading_container.content.controls[1] = status_header
 
         # Initial progress animation
         for i in range(0, 10, 1):
@@ -390,7 +407,8 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
                     color=COLOR_SUCCESS, size=14, font_family=FONT_FAMILY),
         ], spacing=10, alignment=ft.MainAxisAlignment.CENTER)
 
-        loading_container.content.controls[1] = status_header
+        # Update the header in main_content
+        main_content.content.controls[1] = status_header
 
         # Final system messages
         final_steps = [

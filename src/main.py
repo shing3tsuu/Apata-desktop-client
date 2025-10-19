@@ -20,7 +20,6 @@ async def main(page: ft.Page):
     page.title = "APATA"
     page.window.width = 960
     page.window.height = 720
-    page.bgcolor = ft.Colors.BLACK
 
     async def change_screen(screen_name, **kwargs):
         page.controls.clear()
@@ -38,4 +37,4 @@ async def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.app(target=main, assets_dir="assets")

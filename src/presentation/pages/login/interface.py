@@ -7,7 +7,7 @@ from src.presentation.pages import AppState
 
 # Style configuration
 COLOR_ACCENT = "#FFFFFF"
-COLOR_TEXT = "#00FFFF"
+COLOR_TEXT = "#FFFFFF"
 COLOR_INPUT_BG = "#282F32"
 COLOR_SUCCESS = "#00FF00"
 COLOR_ERROR = "#FF4444"
@@ -17,48 +17,21 @@ async def login_interface(page, change_screen, app_state: AppState, **kwargs):
     page.title = "APATA"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
-    page.bgcolor = "#000000"
 
     # Initializing the authentication manager
     auth_manager = AuthManager(app_state)
 
-    # UI State Elements
-    status_text = ft.Text("", color=COLOR_TEXT, size=14, font_family=FONT_FAMILY)
-    progress_indicator = ft.Container(
-        height=2, width=0, bgcolor=COLOR_ACCENT,
-        animate_size=ft.Animation(1000, "easeOut")
-    )
-
-    # Loading animation
-    loading_animation = ft.Row([
-        ft.Text(">", color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
-        ft.Text("_", color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY,
-                animate_opacity=ft.Animation(500, "easeInOut"))
-    ], spacing=2)
-
-    async def blink_cursor():
-        while True:
-            loading_animation.controls[1].opacity = 0
-            page.update()
-            await asyncio.sleep(0.5)
-            loading_animation.controls[1].opacity = 1
-            page.update()
-            await asyncio.sleep(0.5)
-
-    # Start the cursor animation
-    asyncio.create_task(blink_cursor())
-
     # System Title
     title = ft.Container(
-        content=ft.Column([
-            ft.Text("APATA ENCRYPTED SYSTEMS VER 0.1.1 BETA", color=COLOR_ACCENT, size=15, font_family=FONT_FAMILY),
-            ft.Text(
-                f"TEMPORARILY ACCESS POINT VER: {randint(0, 10000)}.{randint(0, 10000)}."
-                f"{randint(0, 10000)}.{randint(0, 10000)}",
-                color=COLOR_ACCENT, size=12, font_family=FONT_FAMILY, text_align=ft.TextAlign.CENTER
-            ),
-            ft.Container(content=progress_indicator, margin=ft.margin.only(top=5)),
-        ]), margin=ft.margin.only(bottom=30)
+        content=ft.Column(
+            [
+                ft.Text(
+                    "APATA ENCRYPTED SYSTEMS VER 0.1.2 BETA",
+                    color=COLOR_ACCENT, size=15,
+                    font_family=FONT_FAMILY,
+                ),
+            ], horizontal_alignment=ft.CrossAxisAlignment.START,
+        ),
     )
 
     # Input fields
@@ -66,8 +39,12 @@ async def login_interface(page, change_screen, app_state: AppState, **kwargs):
         label="username", value="",
         text_style=ft.TextStyle(size=18, color=COLOR_TEXT, font_family=FONT_FAMILY),
         label_style=ft.TextStyle(color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
-        bgcolor=COLOR_INPUT_BG, border=ft.InputBorder.UNDERLINE, border_color=COLOR_ACCENT,
-        height=60, cursor_color=COLOR_ACCENT, width=375,
+        bgcolor=COLOR_INPUT_BG,
+        border=ft.InputBorder.UNDERLINE,
+        border_color=COLOR_ACCENT,
+        width=375,
+        height=60,
+        cursor_color=COLOR_ACCENT,
         on_submit=lambda e: on_auth_click(e)
     )
 
@@ -75,8 +52,12 @@ async def login_interface(page, change_screen, app_state: AppState, **kwargs):
         label="password", value="", password=True, can_reveal_password=True,
         text_style=ft.TextStyle(size=18, color=COLOR_TEXT, font_family=FONT_FAMILY),
         label_style=ft.TextStyle(color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
-        bgcolor=COLOR_INPUT_BG, border=ft.InputBorder.UNDERLINE, border_color=COLOR_ACCENT,
-        height=60, cursor_color=COLOR_ACCENT, width=375,
+        bgcolor=COLOR_INPUT_BG,
+        border=ft.InputBorder.UNDERLINE,
+        border_color=COLOR_ACCENT,
+        width=375,
+        height=60,
+        cursor_color=COLOR_ACCENT,
         on_submit=lambda e: on_auth_click(e)
     )
 
@@ -157,19 +138,27 @@ async def login_interface(page, change_screen, app_state: AppState, **kwargs):
         )
     )
 
+    # UI State Elements
+    status_text = ft.Text("", color=COLOR_TEXT, size=14, font_family=FONT_FAMILY)
+    progress_indicator = ft.Container(
+        height=2, width=0, bgcolor=COLOR_ACCENT,
+        animate_size=ft.Animation(1000, "easeOut")
+    )
+
     # Main container
     login_menu_container = ft.Container(
         content=ft.Column([
-            ft.Text("PLEASE, ENTER YOUR CREDENTIALS", color=COLOR_ACCENT, size=18,
-                    font_family=FONT_FAMILY, text_align=ft.TextAlign.CENTER),
             ft.Container(height=20),
             username_field, ft.Container(height=10), password_field,
             ft.Container(height=25), login_button, ft.Container(height=20),
-            loading_animation, status_text,
+            status_text,
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
-        padding=ft.padding.symmetric(vertical=30, horizontal=25),
-        bgcolor="#0A0A0A", border=ft.border.all(1.5, COLOR_ACCENT),
-        border_radius=ft.border_radius.all(3), width=450,
+        blur=ft.Blur(2, 2, ft.BlurTileMode.REPEATED),
+        padding=ft.padding.symmetric(vertical=40, horizontal=25),
+        # border=ft.border.all(1.5, ft.Colors.with_opacity(0.3, COLOR_ACCENT)),
+        border_radius=40,
+        width=400,
+        height=350
     )
 
     footer = ft.Container(
@@ -180,15 +169,45 @@ async def login_interface(page, change_screen, app_state: AppState, **kwargs):
             ft.Container(width=20),
             ft.Text(f"SESSION: {randint(100000, 999999)}", color=ft.Colors.with_opacity(0.5, COLOR_ACCENT), size=10),
         ], alignment=ft.MainAxisAlignment.CENTER),
+
         padding=10,
         bgcolor=ft.Colors.with_opacity(0.1, COLOR_ACCENT)
     )
 
-    # Main layout
-    main_layout = ft.Container(
-        content=ft.Column([title, login_menu_container, ft.Container(height=152), footer],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
-        padding=20
+    background = ft.Container(
+        content=ft.Image(
+            src="login_background.gif",
+            fit=ft.ImageFit.COVER,
+            width=page.window.width,
+            height=page.window.height,
+            expand=True,
+        ),
+        expand=True,
+    )
+
+    main_layout = ft.Stack(
+        [
+            background,
+            ft.Container(
+                content=ft.Column(
+                    [
+                        title,
+                        ft.Container(height=110),
+                        login_menu_container,
+                        ft.Container(height=20),
+                        ft.Container(content=progress_indicator, margin=ft.margin.only(top=5)),
+                        ft.Container(height=45),
+                        footer
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0
+                ),
+                padding=20,
+                width=page.width,
+                height=page.height,
+            )
+        ],
+        expand=True,
+        width=page.width,
+        height=page.height,
     )
 
     # Clean and add to the page
