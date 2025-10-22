@@ -116,6 +116,8 @@ class CommonHTTPClient:
 
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
 
+        self._logger.info(f"Attempting HTTP {method} to {url}")
+
         try:
             self._logger.debug(f"HTTP {method} {url}")
 
@@ -124,7 +126,13 @@ class CommonHTTPClient:
             self._logger.debug(f"Request data: {log_data}")
 
             start_time = time.time()
-            response = await self._client.request(method, url, **kwargs)
+            response = await self._client.request(
+                method,
+                url,
+                params=kwargs.get('params'),
+                json=kwargs.get('json'),
+                **{k: v for k, v in kwargs.items() if k not in ['params', 'json']}
+            )
             response_time = time.time() - start_time
 
             self._logger.debug(f"Response time: {response_time:.2f}s, Status: {response.status_code}")

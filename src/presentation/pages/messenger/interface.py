@@ -218,8 +218,6 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
     # Event handlers
     async def load_contacts():
         nonlocal contacts
-        if not await messenger_manager.setup_services():
-            raise Exception("Service initialization failed")
         contacts = await messenger_manager.get_contacts()
         contacts_column.controls.clear()
 
@@ -371,6 +369,39 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
             padding=ft.padding.symmetric(vertical=5, horizontal=10)
         )
 
+    async def handle_incoming_message(message_data):
+        nonlocal selected_contact, chat_messages_column, page
+
+        if message_data.get("decryption_status") != "success":
+            return
+
+        # Check if the message is related to the selected contact
+        sender_id = message_data.get("sender_id")
+        if selected_contact == sender_id:
+            # Add a message to the UI
+            message_bubble = create_message_bubble({
+                "id": message_data["id"],
+                "text": message_data["decrypted_content"],
+                "is_outgoing": False,
+                "timestamp": "just now"
+            })
+
+            chat_messages_column.controls.append(message_bubble)
+            page.update()
+
+            await asyncio.sleep(0.1)
+            chat_messages_column.scroll_to(offset=-1, duration=300)
+        else:
+            # Can show a notification or update your contact list
+            print(f"New message from {sender_id}: {message_data['decrypted_content']}")
+
+    async def initialize_manager():
+        if not await messenger_manager.setup_services():
+            raise Exception("Service initialization failed")
+        messenger_manager.add_message_callback(handle_incoming_message)
+        await load_contacts()
+        await messenger_manager.start_polling()
+
     async def send_message_handler():
         if not selected_contact or not message_input.value.strip():
             return
@@ -378,22 +409,8 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
         text = message_input.value.strip()
         message_input.value = ""
 
-        # Get the number of messages for the selected contact
-        # Filter messages by contact_id
-        contact_messages = [msg for msg in messages if msg.contact_id == selected_contact]
-        temp_id = len(contact_messages) + 1
-
-        new_message = Message(
-            server_message_id=None,  # временный ID
-            contact_id=selected_contact,
-            content=text.encode() if isinstance(text, str) else text,
-            timestamp=datetime.utcnow(),
-            type="text",
-            is_outgoing=True,
-            is_delivered=False
-        )
-
-        # Create and add a bubble to the UI
+        # Immediately display the message in the UI
+        temp_id = len(chat_messages_column.controls) + 1
         message_bubble = create_message_bubble({
             "id": temp_id,
             "text": text,
@@ -404,24 +421,26 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
         chat_messages_column.controls.append(message_bubble)
         page.update()
 
-        # Scroll to the bottom
         await asyncio.sleep(0.1)
         chat_messages_column.scroll_to(offset=-1, duration=300)
 
-        # Send a message via the manager
         try:
             success = await messenger_manager.send_message(selected_contact, text)
-            if success:
-                new_message.is_delivered = True
-                # TODO: update server_message_id if manager returns it
-            else:
-                # TODO: показать сообщение об ошибке
-                print("Failed to send message")
+            if not success:
+                error_bubble = create_message_bubble({
+                    "id": temp_id + 1,
+                    "text": "Failed to send message",
+                    "is_outgoing": True,
+                    "timestamp": "just now"
+                })
+                chat_messages_column.controls.append(error_bubble)
+                page.update()
         except Exception as e:
             print(f"Error sending message: {e}")
 
     async def logout():
         # TODO: Implement proper logout logic
+        await messenger_manager.stop_polling()
         await change_screen("login")
 
     # Initialize the interface
@@ -429,4 +448,4 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
     page.add(final_layout)
 
     # Load initial data
-    await load_contacts()
+    await initialize_manager()

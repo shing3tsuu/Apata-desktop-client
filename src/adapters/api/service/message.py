@@ -117,7 +117,6 @@ class MessageHTTPService:
             if message_ids:
                 await self._message_dao.ack_messages(message_ids)
 
-
     async def start_message_polling(
             self,
             token: str,
@@ -150,10 +149,9 @@ class MessageHTTPService:
         :param message_callback:
         :return:
         """
-        # TODO: Add a forced update of public ecdh keys, since the response will come from the user with a new session
         while self._is_polling:
             try:
-                response = await self._message_dao.poll_messages(timeout=30)
+                response = await self._message_dao.poll_messages()
 
                 if response.get("has_messages") and response.get("messages"):
                     encrypted_messages = response["messages"]

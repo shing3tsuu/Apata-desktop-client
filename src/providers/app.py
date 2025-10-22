@@ -70,7 +70,7 @@ class AppProvider(Provider):
     async def api_client(self) -> CommonHTTPClient:
         client = CommonHTTPClient(
             base_url="http://127.0.0.1:8000/",
-            timeout=30.0,
+            timeout=60.0,
             max_retries=3,
             retry_delay=1.0,
             logger=logger

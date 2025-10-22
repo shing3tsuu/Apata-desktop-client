@@ -196,7 +196,7 @@ async def login_interface(page, change_screen, app_state: AppState, **kwargs):
                         login_menu_container,
                         ft.Container(height=20),
                         ft.Container(content=progress_indicator, margin=ft.margin.only(top=5)),
-                        ft.Container(height=45),
+                        ft.Container(height=80),
                         footer
                     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0
                 ),

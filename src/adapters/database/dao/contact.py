@@ -64,7 +64,7 @@ class ContactDAO(AbstractContactDAO):
         try:
             stmt = select(Contact)
             if contact_id:
-                stmt = stmt.where(Contact.id == contact_id)
+                stmt = stmt.where(Contact.server_user_id == contact_id)
             if username:
                 stmt = stmt.where(
                     Contact.username.ilike(username) |

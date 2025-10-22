@@ -45,6 +45,8 @@ class MessengerManager:
     def __init__(self, app_state):
         self.state = app_state
         self.logger = logging.getLogger(__name__)
+        self._message_callbacks = set()
+        self._polling_started = False
 
     async def setup_services(self) -> bool:
         try:
@@ -54,6 +56,7 @@ class MessengerManager:
                 # httpx
                 self.state.contact_http_dao = await request_container.get(ContactHTTPDAO)
                 self.state.message_http_dao = await request_container.get(MessageHTTPDAO)
+
                 self.state.auth_http_service = await request_container.get(AuthHTTPService)
                 self.state.contact_http_service = await request_container.get(ContactHTTPService)
                 self.state.message_http_service = await request_container.get(MessageHTTPService)
@@ -127,8 +130,8 @@ class MessengerManager:
 
             # Decrypt and convert to the required format
             messages = []
+            self.logger.info(f"Start decrypting {len(db_messages)} messages content")
             for message in db_messages:
-                self.logger.info(f"Start decrypting {len(db_messages)} messages content")
                 try:
                     decrypted_content = await self.state.aes_cipher.decrypt(
                         ciphertext=message.content,
@@ -178,7 +181,158 @@ class MessengerManager:
 
         return str(timestamp)
 
+    def add_message_callback(self, callback):
+        """
+        Add a callback function to be called when a new message arrives
+        :param callback:
+        :return:
+        """
+        self._message_callbacks.add(callback)
+        self.logger.info(f"Added message callback, total: {len(self._message_callbacks)}")
+
+    def remove_message_callback(self, callback):
+        """
+        Remove a callback function
+        :param callback:
+        :return:
+        """
+        self._message_callbacks.discard(callback)
+
+    async def _handle_incoming_message(self, message_data: dict):
+        """
+        Handle incoming message from polling
+        :param message_data:
+        :return:
+        """
+        try:
+            self.logger.info(f"Handling incoming message: {message_data}")
+
+            # Save the message to the local database
+            if message_data.get("decryption_status") == "success":
+                contact_id = message_data.get("sender_id")
+                ciphertext = await self.state.aes_cipher.encrypt(
+                    plaintext=message_data["decrypted_content"],
+                    key=self.state.master_key
+                )
+
+                await self.state.message_service.add_message(
+                    MessageRequestDTO(
+                        server_message_id=message_data["id"],
+                        contact_id=contact_id,
+                        content=ciphertext,
+                        timestamp=datetime.utcnow(),
+                        type="text",
+                        is_outgoing=False,
+                        is_delivered=True
+                    )
+                )
+                # Forced update of contact data due to a potential new session and a new key on the other side
+                response = await self.state.auth_http_service.get_public_keys(contact_id)
+                await self.state.contact_service.update_contact(
+                    ContactRequestDTO(
+                        server_user_id=contact_id,
+                        ecdh_public_key=response["ecdh_public_key"]
+                    )
+                )
+
+                # Call all registered callbacks
+                for callback in self._message_callbacks:
+                    try:
+                        if asyncio.iscoroutinefunction(callback):
+                            await callback(message_data)
+                        else:
+                            callback(message_data)
+                    except Exception as e:
+                        self.logger.error(f"Error in message callback: {e}")
+
+        except Exception as e:
+            self.logger.error(f"Error handling incoming message: {e}")
+
+    async def start_polling(self):
+        """
+        Start message polling
+        :return:
+        """
+        if self._polling_started:
+            self.logger.warning("Message polling already started")
+            return
+
+        try:
+            # Create a callback function for MessageHTTPService
+            async def polling_callback(message_data):
+                await self._handle_incoming_message(message_data)
+
+            # Start polling
+            await self.state.message_http_service.start_message_polling(
+                token=self.state.token,
+                user_private_key=self.state.ecdh_private_key,
+                message_callback=polling_callback
+            )
+
+            self._polling_started = True
+
+            self.logger.info("Message polling started successfully")
+
+        except Exception as e:
+            self._polling_started = False
+            self.logger.error(f"Failed to start message polling: {e}")
+            raise
+
+    async def stop_polling(self):
+        """
+        Stop message polling
+        :return:
+        """
+        if not self._polling_started:
+            return
+
+        try:
+            await self.state.message_http_service.stop_message_polling()
+            self._polling_started = False
+            self.logger.info("Message polling stopped")
+        except Exception as e:
+            self.logger.error(f"Error stopping message polling: {e}")
+
     async def send_message(self, contact_id: int, text: str) -> bool:
-        # TODO: Realize sending messages (adding in local db, send to server, start message polling for possible response)
-        self.logger.info(f"Sending message to {contact_id}: {text}")
-        return True
+        try:
+            self.logger.info(f"Start sending message to {contact_id}: {text}")
+            # Find contact data
+            contact = await self.state.contact_service.get_contact(contact_id=contact_id)
+            # Send encrypted message
+            message = await self.state.message_http_service.send_encrypted_message(
+                recipient_id=contact_id,
+                message=text,
+                sender_private_key=self.state.ecdh_private_key,
+                sender_public_key=self.state.ecdh_public_key,
+                recipient_public_key=contact.ecdh_public_key,
+            )
+
+            if not message:
+                self.logger.error("Failed to send message, no response from server")
+                return False
+            # Encrypt the message content with the master key
+            ciphertext = await self.state.aes_cipher.encrypt(
+                plaintext=text,
+                key=self.state.master_key
+            )
+            # Save the message to the local database
+            await self.state.message_service.add_message(
+                MessageRequestDTO(
+                    server_message_id=message.get("id"),
+                    contact_id=contact_id,
+                    content=ciphertext,
+                    timestamp=datetime.utcnow(),
+                    type="text",
+                    is_outgoing=True,
+                    is_delivered=True
+                )
+            )
+            # Make sure polling is running
+            if not self._polling_started:
+                await self.start_polling()
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error sending message: {e}", exc_info=True)
+            return False

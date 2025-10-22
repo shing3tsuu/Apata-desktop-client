@@ -56,21 +56,18 @@ class MessageHTTPDAO:
             self._logger.error(f"Get undelivered messages request failed: {e}")
             return {"has_messages": False, "messages": []}
 
-    async def poll_messages(self, timeout: int) -> dict[str, Any]:
+    async def poll_messages(self) -> dict[str, Any]:
         """
         Long-polling to receive new messages
-        :param timeout: Server-side timeout in seconds
         :return:
         """
         self._http_client.set_auth_token(self._current_token)
-        params = {"timeout": timeout}
 
         try:
-            response = await self._http_client.get("/poll", params=params)
+            response = await self._http_client.get("/poll-messages")
             return {
                 "has_messages": response.get("has_messages", False),
                 "messages": response.get("messages", []),
-                "last_message_id": response.get("last_message_id")
             }
         except Exception as e:
             self._logger.error(f"Polling request failed: {e}")

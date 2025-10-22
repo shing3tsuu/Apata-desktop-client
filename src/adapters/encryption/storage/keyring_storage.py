@@ -177,7 +177,7 @@ class EncryptedKeyStorage:
             self.logger.error(f"Failed to store ECDSA private key: {e}")
             return False
 
-    async def get_ecdh_private_key(self, username: str, password: str) -> Optional[str]:
+    async def get_ecdh_private_key(self, username: str, password: str) -> str | None:
         """Retrieves and decrypts the ECDH private key"""
         if not username or not password:
             self.logger.error("Username or password is empty")
@@ -209,7 +209,7 @@ class EncryptedKeyStorage:
             self.logger.error(f"Failed to get ECDH private key: {e}")
             return None
 
-    async def get_ecdsa_private_key(self, username: str, password: str) -> Optional[str]:
+    async def get_ecdsa_private_key(self, username: str, password: str) -> str | None:
         """Retrieves and decrypts the ECDSA private key"""
         if not username or not password:
             self.logger.error("Username or password is empty")

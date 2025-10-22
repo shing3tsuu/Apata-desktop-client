@@ -46,11 +46,11 @@ class AESGCMCipher(AbstractAES256Cipher):
     def __init__(self, logger: logging.Logger | None = None):
         self.logger = logger
 
-    async def encrypt(self, plaintext: str, key: bytes) -> str:
+    async def encrypt(self, plaintext: str, key: bytes) -> bytes:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._safe_encrypt, plaintext, key)
 
-    def _safe_encrypt(self, plaintext: str, key: bytes) -> str:
+    def _safe_encrypt(self, plaintext: str, key: bytes) -> bytes:
         if len(key) != 32:
             raise ValueError("AES key must be 32 bytes long")
 
@@ -63,28 +63,27 @@ class AESGCMCipher(AbstractAES256Cipher):
             )
             encryptor = cipher.encryptor()
             ciphertext = encryptor.update(plaintext.encode()) + encryptor.finalize()
-            return base64.b64encode(nonce + ciphertext + encryptor.tag).decode()
+            return nonce + ciphertext + encryptor.tag
         except Exception as e:
             self.logger.error(f"Error encrypting data: {e}")
             raise
 
-    async def decrypt(self, ciphertext: str, key: bytes) -> str:
+    async def decrypt(self, ciphertext: bytes, key: bytes) -> str:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._safe_decrypt, ciphertext, key)
 
-    def _safe_decrypt(self, ciphertext: str, key: bytes) -> str:
+    def _safe_decrypt(self, ciphertext: bytes, key: bytes) -> str:
         if len(key) != 32:
             raise ValueError("AES key must be 32 bytes long")
 
         try:
-            if not isinstance(ciphertext, str) or not ciphertext or len(ciphertext) < 28:
-                self.logger.error("Invalid ciphertext")
+            if not isinstance(ciphertext, bytes) or len(ciphertext) < 28:
+                self.logger.error(f"Invalid ciphertext: type={type(ciphertext)}, length={len(ciphertext) if ciphertext else 0}")
                 raise ValueError("Invalid ciphertext")
 
-            data = base64.b64decode(ciphertext)
-            nonce = data[:12]
-            ciphertext_data = data[12:-16]
-            tag = data[-16:]
+            nonce = ciphertext[:12]
+            ciphertext_data = ciphertext[12:-16]
+            tag = ciphertext[-16:]
 
             cipher = Cipher(
                 algorithms.AES(key),
