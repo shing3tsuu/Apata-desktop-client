@@ -27,11 +27,12 @@ class MessageHTTPDAO:
         self._current_token = None
         self._http_client.clear_auth_token()
 
-    async def send_message(self, recipient_id: int, message: str) -> dict[str, Any]:
+    async def send_message(self, recipient_id: int, message: str, ephemeral_public_key: str) -> dict[str, Any]:
         """
         Sending an encrypted message
-        :param recipient_id:
-        :param message:
+        :param recipient_id - recipient id on server
+        :param message - ciphertext in base64
+        :param ephemeral_public_key - ecdh ephemeral public key on current session
         :return:
         """
         try:
@@ -39,7 +40,8 @@ class MessageHTTPDAO:
             data = {
                 "recipient_id": recipient_id,
                 "message": message,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat(),
+                "ephemeral_public_key": ephemeral_public_key
             }
             return await self._http_client.post("/send", data)
         except Exception as e:

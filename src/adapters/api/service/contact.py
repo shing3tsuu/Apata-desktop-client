@@ -18,15 +18,14 @@ class ContactHTTPService:
     async def search_users(self, username: str) -> list[dict[str, Any]]:
         return await self._contact_dao.search_users(username=username)
 
-    async def contact_data_synchronization(self, users_ids: list[int], current_user_id: int, token: str) -> list[
+    async def contact_data_synchronization(self, users_ids: list[int], current_user_id: int) -> list[
         dict[str, Any]]:
         try:
             if not users_ids:
                 return []
             result = await self._contact_dao.get_users_data(
                 users_ids=users_ids,
-                current_user_id=current_user_id,
-                token=token
+                current_user_id=current_user_id
             )
             return result
         except Exception as e:
@@ -80,7 +79,8 @@ class ContactHTTPService:
                     server_user_id=user_id_key,
                     username=user_data['username'],
                     status=status_map.get(user_id_key, 'none'),
-                    ecdh_public_key=user_data.get('ecdh_public_key', '')
+                    ecdh_public_key=user_data.get('ecdh_public_key', ''),
+                    last_seen=user_data.get('last_seen'),
                 ))
 
             return result

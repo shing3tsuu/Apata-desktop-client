@@ -2,14 +2,14 @@ import flet as ft
 import asyncio
 from presentation.pages.login import login_interface
 from presentation.pages.loading import loading_interface
-# from presentation.pages.messenger.interface import messenger_interface
-# from presentation.pages.contacts.interface import contacts_interface
+from presentation.pages.messenger.interface import messenger_interface
 from presentation.pages import AppState
 
 # Dictionary for storing all interfaces
 PAGES = {
     "login": login_interface,
     "loading": loading_interface,
+    "messenger": messenger_interface,
 }
 
 

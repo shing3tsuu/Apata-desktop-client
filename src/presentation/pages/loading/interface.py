@@ -26,11 +26,6 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
     # System initialization steps with real methods
     initialization_steps = [
         {
-            "name": "INITIALIZING SECURITY SERVICES",
-            "method": loading_manager.setup_services,
-            "params": {}
-        },
-        {
             "name": "SYNCHRONIZING CONTACTS DATABASE",
             "method": loading_manager.synchronize_contacts,
             "params": {}
@@ -372,6 +367,8 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
             page.update()
 
             try:
+                if not await loading_manager.setup_services():
+                    raise Exception("Service initialization failed")
                 # Executing a method
                 success, message = await step_method(**step_params)
 
@@ -388,7 +385,6 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
                 return  # Terminate the process on error
 
         # Final animation
-        await asyncio.sleep(0.5)
 
         # Smooth filling up to 100%
         final_progress = 100
@@ -420,11 +416,10 @@ async def loading_interface(page, change_screen, app_state, **kwargs):
         ]
 
         for step in final_steps:
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.1)
             await add_step_status(step, "completed")
 
         # Final delay and transition
-        await asyncio.sleep(1.5)
         await change_screen("messenger")
 
     # Launching animations

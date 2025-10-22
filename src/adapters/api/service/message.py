@@ -32,6 +32,7 @@ class MessageHTTPService:
             recipient_id: int,
             message: str,
             sender_private_key: str,
+            sender_public_key: str,
             recipient_public_key: str
     ) -> dict[str, Any]:
         """
@@ -39,6 +40,7 @@ class MessageHTTPService:
         :param recipient_id: Recipient ID
         :param message: Message text
         :param sender_private_key: Sender's private key
+        :param sender_public_key: Sender's public key
         :param recipient_public_key: Recipient's public key
         :return: Sending result
         """
@@ -53,7 +55,8 @@ class MessageHTTPService:
             # Send the encrypted message
             result = await self._message_dao.send_message(
                 recipient_id=recipient_id,
-                message=encrypted_message
+                message=encrypted_message,
+                ephemeral_public_key=sender_public_key
             )
 
             self._logger.info(f"Encrypted message sent to {recipient_id}")
@@ -66,12 +69,10 @@ class MessageHTTPService:
     async def get_undelivered_messages(
             self,
             user_private_key: str,
-            sender_public_keys: dict[int, str] | None, # Key cache for optimization
     ) -> list[dict[str, Any]]:
         """
         Fetch undelivered messages
         :param user_private_key:
-        :param sender_public_keys:
         :return:
         """
         # Fetch undelivered messages
@@ -83,27 +84,11 @@ class MessageHTTPService:
 
             for message in encrypted_messages:
                 try:
-                    sender_id = message["sender_id"]
-
-                    # Get the sender's public key (from cache or request)
-                    if sender_id not in sender_public_keys:
-                        self._logger.info(f"Fetching public key for sender {sender_id}")
-                        public_keys_response = await self._auth_dao.get_public_keys(sender_id)
-                        sender_ecdh_public_key = public_keys_response.get("ecdh_public_key")
-
-                        if not sender_ecdh_public_key:
-                            self._logger.error(f"No ECDH public key found for sender {sender_id}")
-                            continue
-
-                        sender_public_keys[sender_id] = sender_ecdh_public_key
-                    else:
-                        sender_ecdh_public_key = sender_public_keys[sender_id]
-
                     # Decrypt the message
                     decrypted_content = await self._encryption_service.decrypt_message(
                         encrypted_message=message["message"],
                         recipient_private_key=user_private_key,
-                        sender_public_key=sender_ecdh_public_key
+                        sender_public_key=message["ephemeral_public_key"]
                     )
 
                     # Collecting the result
@@ -130,21 +115,19 @@ class MessageHTTPService:
 
             # Confirm all processed messages
             if message_ids:
-                await self._message_dao.ack_messages(message_ids, self._current_token)
+                await self._message_dao.ack_messages(message_ids)
 
 
     async def start_message_polling(
             self,
             token: str,
             user_private_key: str,
-            sender_public_keys: dict[int, str] | None, # Key cache for optimization
             message_callback: callable
     ):
         """
         Start message polling
         :param token:
         :param user_private_key:
-        :param sender_public_keys:
         :param message_callback:
         :return:
         """
@@ -156,10 +139,10 @@ class MessageHTTPService:
         self._current_token = token
 
         self._polling_task = asyncio.create_task(
-            self._polling_loop(user_private_key, sender_public_keys, message_callback)
+            self._polling_loop(user_private_key, message_callback)
         )
 
-    async def _polling_loop(self, user_private_key, sender_public_keys, message_callback):
+    async def _polling_loop(self, user_private_key, message_callback):
         """
         Long polling loop
         :param user_private_key:
@@ -167,6 +150,7 @@ class MessageHTTPService:
         :param message_callback:
         :return:
         """
+        # TODO: Add a forced update of public ecdh keys, since the response will come from the user with a new session
         while self._is_polling:
             try:
                 response = await self._message_dao.poll_messages(timeout=30)
@@ -177,27 +161,11 @@ class MessageHTTPService:
 
                     for message in encrypted_messages:
                         try:
-                            sender_id = message["sender_id"]
-
-                            # Get the sender's public key (from cache or request)
-                            if sender_id not in sender_public_keys:
-                                self._logger.info(f"Fetching public key for sender {sender_id}")
-                                public_keys_response = await self._auth_dao.get_public_keys(sender_id)
-                                sender_ecdh_public_key = public_keys_response.get("ecdh_public_key")
-
-                                if not sender_ecdh_public_key:
-                                    self._logger.error(f"No ECDH public key found for sender {sender_id}")
-                                    continue
-
-                                sender_public_keys[sender_id] = sender_ecdh_public_key
-                            else:
-                                sender_ecdh_public_key = sender_public_keys[sender_id]
-
                             # Decrypt the message
                             decrypted_content = await self._encryption_service.decrypt_message(
                                 encrypted_message=message["message"],
                                 recipient_private_key=user_private_key,
-                                sender_public_key=sender_ecdh_public_key
+                                sender_public_key=message["ephemeral_public_key"]
                             )
 
                             # Collecting the result

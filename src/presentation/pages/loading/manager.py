@@ -7,7 +7,7 @@ from src.exceptions import *
 from dishka import make_async_container
 
 from src.providers import AppProvider
-from src.presentation.pages import AppState
+from src.presentation.pages import AppState, Contact, Message
 
 from src.adapters.api.dao import (
     ContactHTTPDAO,
@@ -132,6 +132,16 @@ class LoadingManager:
                     await self.state.contact_service.add_contact(server_contact)
                     self.logger.info(f"Added new contact: {server_contact.username}")
 
+                self.state.contacts_cache.append(
+                    Contact(
+                        server_user_id=server_contact.server_user_id,
+                        username=server_contact.username,
+                        ecdh_public_key=server_contact.ecdh_public_key,
+                        status=server_contact.status,
+                        last_seen=server_contact.last_seen,
+                    )
+                )
+
             # Remove local contacts that no longer exist on server
             server_contact_ids = {contact.server_user_id for contact in server_contacts}
             for local_contact in local_contacts:
@@ -164,23 +174,13 @@ class LoadingManager:
                 self.state.public_keys_cache.update({contact.server_user_id: contact.ecdh_public_key})
             # Get undelivered messages
             new_messages = await self.state.message_http_service.get_undelivered_messages(
-                user_private_key=self.state.ecdh_private_key,
-                sender_public_keys=self.state.public_keys_cache
+                user_private_key=self.state.ecdh_private_key
             )
             if not new_messages:
                 return True, "No new messages to synchronize"
             # Adding new messages to local storage and state
             for new_message in new_messages:
                 self.logger.info(f"Adding new message from: {new_message.recipient_id} to local storage...")
-                self.state.messages.append(MessageRequestDTO(
-                        server_message_id=new_message.id,
-                        contact_id=new_message.sender_id,
-                        content=new_message.message,
-                        timestamp=new_message.timestamp,
-                        type=None,
-                        is_outgoing=False,
-                        is_delivered=True
-                    ))
                 encrypted_message = await self.state.aes_cipher.encrypt(
                     new_message.message,
                     self.state.master_key
@@ -223,8 +223,11 @@ class LoadingManager:
             ):
                 return False, "Failed to store ECDH private key"
 
-            self.state.update_ecdh_private_key(
-                ecdh_private_key=ecdh_private_key
+            data = await self.state.auth_http_service.get_public_keys(self.state.user_id)
+
+            self.state.update_ecdh_keys(
+                ecdh_public_key=data["ecdh_public_key"],
+                ecdh_private_key=ecdh_private_key,
             )
 
             return True, "Keys rotated successfully"

@@ -1,7 +1,6 @@
 from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dishka import AsyncContainer
-from pydantic import BaseModel
 from datetime import datetime
 
 from src.adapters.api.service import (
@@ -26,14 +25,26 @@ from src.adapters.database.service import (
 
 from src.adapters.database.dto import MessageRequestDTO
 
-class Message(BaseModel):
+
+@dataclass(kw_only=True)
+class Contact:
+    server_user_id: int
+    username: str
+    ecdh_public_key: str
+    last_seen: datetime
+
+    status: str | None = field(default=None)
+
+@dataclass(kw_only=True)
+class Message:
     server_message_id: int
     contact_id: int
     content: bytes
     timestamp: datetime
-    type: str | None = None  # "text", "image", "video", "audio", "file"
     is_outgoing: bool  # True - outgoing, False - incoming
     is_delivered: bool
+
+    type: str | None = field(default=None)  # "text", "image", "video", "audio", "file"
 
 @dataclass
 class AppState:
@@ -42,6 +53,7 @@ class AppState:
     password: str | None = None
     master_key: bytes | None = None
     ecdsa_private_key: str | None = None
+    ecdh_public_key: str | None = None
     ecdh_private_key: str | None = None
     token: str | None = None
     is_authenticated: bool = False
@@ -60,14 +72,18 @@ class AppState:
     message_service: MessageService = None
 
     public_keys_cache: dict[int, str] = None
-    messages: list[Message] = None
+    contacts_cache: list[Contact] = None
+    messages_cache: list[Message] = None
+
     _container: AsyncContainer = None
 
     def __post_init__(self):
         if self.public_keys_cache is None:
             self.public_keys_cache = {}
-        if self.messages is None:
-            self.messages = []
+        if self.contacts_cache is None:
+            self.contacts_cache = []
+        if self.messages_cache is None:
+            self.messages_cache = []
 
     def update_from_login(
             self,
@@ -88,7 +104,8 @@ class AppState:
         self.token = token
         self.is_authenticated = True
 
-    def update_ecdh_private_key(self, ecdh_private_key: str):
+    def update_ecdh_keys(self, ecdh_public_key: str, ecdh_private_key: str):
+        self.ecdh_public_key = ecdh_public_key
         self.ecdh_private_key = ecdh_private_key
 
     def clear(self):
@@ -97,6 +114,7 @@ class AppState:
         self.user_id = None
         self.master_key = None
         self.ecdsa_private_key = None
+        self.ecdh_public_key = None
         self.ecdh_private_key = None
         self.is_authenticated = False
         self.public_keys_cache.clear()

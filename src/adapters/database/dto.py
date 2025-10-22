@@ -15,6 +15,7 @@ class ContactRequestDTO(BaseModel):
     status: str | None = None
     username: str
     ecdh_public_key: str
+    last_seen: datetime | None = None
 
 class ContactDTO(ContactRequestDTO):
     id: int

@@ -30,6 +30,7 @@ class Contact(Base):
     status: Mapped[Optional[str]]
     username: Mapped[str] = mapped_column(String(50))
     ecdh_public_key: Mapped[str] = mapped_column(Text)
+    last_seen: Mapped[Optional[datetime]]
 
     messages: Mapped[List["Message"]] = relationship(
         "Message",
