@@ -41,9 +41,7 @@ class ContactHTTPService:
         """
         try:
             # First get contact relationships
-            contacts = await self._contact_dao.get_contacts(
-                user_id=user_id
-            )
+            contacts = await self._contact_dao.get_contacts(user_id=user_id)
 
             if not contacts:
                 return []
@@ -80,7 +78,7 @@ class ContactHTTPService:
                     username=user_data['username'],
                     status=status_map.get(user_id_key, 'none'),
                     ecdh_public_key=user_data.get('ecdh_public_key', ''),
-                    last_seen=user_data.get('last_seen'),
+                    last_seen=user_data.get('last_seen', ''),
                 ))
 
             return result

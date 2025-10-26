@@ -8,20 +8,20 @@ from .manager import LoadingManager
 # Style configuration
 COLOR_ACCENT = "#FFFFFF"
 COLOR_TEXT = "#FFFFFF"
-COLOR_SUCCESS = "#00FF00"
+COLOR_SUCCESS = "#7FFFD4"
 COLOR_WARNING = "#FFFFFF"
 COLOR_ERROR = "#FF4444"
 COLOR_SECONDARY = "#FFFFFF"
 FONT_FAMILY = "RobotoSlab"
 
 
-async def loading_interface(page, change_screen, app_state, **kwargs):
+async def loading_interface(page, change_screen, app_state, container, **kwargs):
     page.title = "APATA - SYSTEM INITIALIZATION"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.bgcolor = "#000000"
 
-    loading_manager = LoadingManager(app_state)
+    loading_manager = LoadingManager(app_state, container)
 
     # System initialization steps with real methods
     initialization_steps = [

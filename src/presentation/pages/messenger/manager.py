@@ -5,10 +5,10 @@ from datetime import datetime
 
 from pyexpat.errors import messages
 from src.exceptions import *
-from dishka import make_async_container
+from dishka import AsyncContainer
 
 from src.providers import AppProvider
-from src.presentation.pages import AppState, Contact, Message
+from src.presentation.pages import AppState, Contact, Message, Container
 
 from src.adapters.api.dao import (
     ContactHTTPDAO,
@@ -41,64 +41,12 @@ from src.adapters.encryption.service import (
 
 from src.adapters.encryption.storage import EncryptedKeyStorage
 
-class MessengerManager:
-    def __init__(self, app_state):
-        self.state = app_state
-        self.logger = logging.getLogger(__name__)
-        self._message_callbacks = set()
+class MessengerManager(Container):
+    def __init__(self, app_state: AppState, container: AsyncContainer):
+        super().__init__(app_state, container)
+        self._message_callbacks: Set[Callable[[dict], Any]] = set()
         self._polling_started = False
-
-    async def setup_services(self) -> bool:
-        try:
-            self.state._container = make_async_container(AppProvider())
-
-            async with self.state._container() as request_container:
-                # httpx
-                self.state.contact_http_dao = await request_container.get(ContactHTTPDAO)
-                self.state.message_http_dao = await request_container.get(MessageHTTPDAO)
-
-                self.state.auth_http_service = await request_container.get(AuthHTTPService)
-                self.state.contact_http_service = await request_container.get(ContactHTTPService)
-                self.state.message_http_service = await request_container.get(MessageHTTPService)
-                # sqlalchemy
-                self.state.local_user_service = await request_container.get(LocalUserService)
-                self.state.contact_service = await request_container.get(ContactService)
-                self.state.message_service = await request_container.get(MessageService)
-                # cryptography and keyring storage
-                self.state.aes_cipher = await request_container.get(AbstractAES256Cipher)
-                self.state.ecdh_cipher = await request_container.get(AbstractECDHCipher)
-                self.state.key_storage = await request_container.get(EncryptedKeyStorage)
-                self.state.password_hasher = await request_container.get(AbstractPasswordHasher)
-
-            # Check that all services are initialized
-            required_services = [
-                self.state.contact_http_dao,
-                self.state.message_http_dao,
-                self.state.auth_http_service,
-                self.state.contact_http_service,
-                self.state.message_http_service,
-                self.state.local_user_service,
-                self.state.contact_service,
-                self.state.message_service,
-                self.state.aes_cipher,
-                self.state.ecdh_cipher,
-                self.state.key_storage,
-                self.state.password_hasher
-            ]
-
-            if any(service is None for service in required_services):
-                return False, "Some services failed to initialize"
-
-            self.state.auth_http_service.set_token(self.state.token)
-            self.state.contact_http_dao.set_token(self.state.token)
-            self.state.message_http_dao.set_token(self.state.token)
-
-            return True, "All services initialized successfully"
-
-        except Exception as e:
-            error_msg = e
-            self.logger.critical(f"Service setup failed: {error_msg}")
-            return False, error_msg
+        self._polling_task:asyncio.Task | None = None
 
     async def get_contacts(self) -> list[Contact]:
         """
@@ -116,7 +64,11 @@ class MessengerManager:
         try:
             # Get messages from the database
             self.logger.info(f"Getting messages for contact {contact_id}")
-            db_messages = await self.state.message_service.get_messages(contact_id=contact_id, limit=50)
+            db_messages = await self.state.message_service.get_messages(
+                local_user_id=self.state.local_user_id,
+                contact_id=contact_id,
+                limit=50
+            )
 
             # If there are no messages, return a welcome message
             if not db_messages:
@@ -217,6 +169,7 @@ class MessengerManager:
 
                 await self.state.message_service.add_message(
                     MessageRequestDTO(
+                        local_user_id=self.state.local_user.id,
                         server_message_id=message_data["id"],
                         contact_id=contact_id,
                         content=ciphertext,
@@ -230,6 +183,7 @@ class MessengerManager:
                 response = await self.state.auth_http_service.get_public_keys(contact_id)
                 await self.state.contact_service.update_contact(
                     ContactRequestDTO(
+                        local_user_id=self.state.local_user.id,
                         server_user_id=contact_id,
                         ecdh_public_key=response["ecdh_public_key"]
                     )
@@ -297,7 +251,10 @@ class MessengerManager:
         try:
             self.logger.info(f"Start sending message to {contact_id}: {text}")
             # Find contact data
-            contact = await self.state.contact_service.get_contact(contact_id=contact_id)
+            contact = await self.state.contact_service.get_contact(
+                local_user_id=self.state.local_user_id,
+                contact_id=contact_id
+            )
             # Send encrypted message
             message = await self.state.message_http_service.send_encrypted_message(
                 recipient_id=contact_id,
@@ -318,6 +275,7 @@ class MessengerManager:
             # Save the message to the local database
             await self.state.message_service.add_message(
                 MessageRequestDTO(
+                    local_user_id=self.state.local_user_id,
                     server_message_id=message.get("id"),
                     contact_id=contact_id,
                     content=ciphertext,
@@ -335,4 +293,13 @@ class MessengerManager:
 
         except Exception as e:
             self.logger.error(f"Error sending message: {e}", exc_info=True)
+            return False
+
+    async def logout(self):
+        try:
+            self.state.clear()
+            self.logger.info("Successfully logged out")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error logging out: {e}")
             return False

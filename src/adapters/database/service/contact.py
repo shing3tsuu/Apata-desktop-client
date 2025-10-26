@@ -12,11 +12,19 @@ class ContactService:
         await self._common_dao.commit()
         return result
 
-    async def get_contact(self, contact_id: int | None = None, username: str | None = None) -> ContactDTO | None:
-        return await self._contact_dao.get_contact(contact_id=contact_id, username=username)
+    async def get_contact(
+            self,
+            local_user_id: int,
+            contact_id: int | None = None,
+            username: str | None = None
+    ) -> ContactDTO | None:
+        return await self._contact_dao.get_contact(
+            local_user_id,
+            contact_id
+        )
 
-    async def get_contacts(self) -> list[ContactDTO]:
-        return await self._contact_dao.get_contacts()
+    async def get_contacts(self, local_user_id: int) -> list[ContactDTO]:
+        return await self._contact_dao.get_contacts(local_user_id)
 
     async def update_contact(self, contact: ContactRequestDTO) -> ContactDTO | None:
         result = await self._contact_dao.update_contact(contact)

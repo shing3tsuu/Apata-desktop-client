@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import logging
 
-from sqlalchemy import select, delete, insert, update, func, case
+from sqlalchemy import select, delete, insert, update, func, case, and_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,11 +16,11 @@ class AbstractContactDAO(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def get_contact(self, contact_id: int | None = None, username: str | None = None) -> ContactDTO | None:
+    async def get_contact(self, user_id: int, contact_id: int | None = None, username: str | None = None) -> ContactDTO | None:
         raise NotImplementedError()
 
     @abstractmethod
-    async def get_contacts(self) -> list[ContactDTO]:
+    async def get_contacts(self, contacts: ContactRequestDTO) -> list[ContactDTO]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -40,7 +40,10 @@ class ContactDAO(AbstractContactDAO):
 
     async def add_contact(self, contact: ContactRequestDTO) -> ContactDTO:
         try:
-            existing_contact = await self.get_contact(username=contact.username)
+            existing_contact = await self.get_contact(
+                local_user_id=contact.local_user_id,
+                username=contact.username
+            )
             if existing_contact:
                 raise ContactAlreadyExistsError("Contact with this user already exists")
 
@@ -57,18 +60,31 @@ class ContactDAO(AbstractContactDAO):
             self._logger.error("Error adding contact: %s", e)
             return None
 
-    async def get_contact(self, contact_id: int | None = None, username: str | None = None) -> ContactDTO | None:
+    async def get_contact(
+            self,
+            local_user_id: int,
+            contact_id: int | None = None,
+            username: str | None = None
+    ) -> ContactDTO | None:
         if not contact_id and not username:
             raise ValueError("Either contact_id or username must be provided")
 
         try:
             stmt = select(Contact)
             if contact_id:
-                stmt = stmt.where(Contact.server_user_id == contact_id)
+                stmt = stmt.where(
+                    and_(
+                        Contact.local_user_id == local_user_id,
+                        Contact.server_user_id == contact_id
+                    )
+                )
             if username:
                 stmt = stmt.where(
-                    Contact.username.ilike(username) |
-                    Contact.username.ilike(f"%{username}%")
+                    and_(
+                        Contact.local_user_id == local_user_id,
+                        Contact.username.ilike(username) |
+                        Contact.username.ilike(f"%{username}%")
+                    )
                 ).order_by(
                     case(
                         (Contact.username.ilike(username), 0),
@@ -83,9 +99,9 @@ class ContactDAO(AbstractContactDAO):
             self._logger.error("Error fetching contact in database: %s", e)
             return None
 
-    async def get_contacts(self) -> list[ContactDTO]:
+    async def get_contacts(self, local_user_id: int) -> list[ContactDTO]:
         try:
-            stmt = select(Contact)
+            stmt = select(Contact).where(Contact.local_user_id == local_user_id)
             result = await self._session.scalars(stmt)
 
             return [ContactDTO.model_validate(contact, from_attributes=True) for contact in result]

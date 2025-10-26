@@ -12,8 +12,12 @@ class MessageService:
         await self._common_dao.commit()
         return result
 
-    async def get_messages(self, contact_id: int, limit: int | None = None) -> list[MessageDTO]:
-        return await self._message_dao.get_messages(contact_id=contact_id, limit=limit)
+    async def get_messages(self, local_user_id: int, contact_id: int, limit: int | None = None) -> list[MessageDTO]:
+        return await self._message_dao.get_messages(
+            local_user_id=local_user_id,
+            contact_id=contact_id,
+            limit=limit
+        )
 
     async def delete_message(self, message_id: int) -> bool:
         result = await self._message_dao.delete_message(message_id)

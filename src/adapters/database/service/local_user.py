@@ -12,8 +12,8 @@ class LocalUserService:
         await self._common_dao.commit()
         return result
 
-    async def get_user_data(self) -> LocalUserDTO | None:
-        return await self._local_user_dao.get_user_data()
+    async def get_user_data(self, user: LocalUserRequestDTO) -> LocalUserDTO | None:
+        return await self._local_user_dao.get_user_data(user)
 
     async def update_user_data(self, user: LocalUserDTO) -> LocalUserDTO | None:
         result = await self._local_user_dao.update_user_data(user)

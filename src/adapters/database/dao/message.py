@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import logging
 
-from sqlalchemy import select, delete, insert, update, func, case
+from sqlalchemy import select, delete, insert, update, func, case, and_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ class AbstractMessageDAO(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def get_messages(self, contact_id: int, limit: int | None = None) -> list[MessageDTO]:
+    async def get_messages(self, local_user_id: int, contact_id: int, limit: int | None = None) -> list[MessageDTO]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -42,9 +42,14 @@ class MessageDAO(AbstractMessageDAO):
         except SQLAlchemyError as e:
             self._logger.error(f"Error adding message in database: {e}")
 
-    async def get_messages(self, contact_id: int, limit: int | None = None) -> list[MessageDTO]:
+    async def get_messages(self, local_user_id: int, contact_id: int, limit: int | None = None) -> list[MessageDTO]:
         try:
-            stmt = select(Message).where(Message.contact_id == contact_id)
+            stmt = select(Message).where(
+                and_(
+                    Message.local_user_id == local_user_id,
+                    Message.contact_id == contact_id
+                )
+            )
             if limit:
                 stmt = stmt.limit(limit)
             result = await self._session.scalars(stmt)

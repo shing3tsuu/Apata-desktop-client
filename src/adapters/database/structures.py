@@ -14,9 +14,23 @@ class LocalUser(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_user_id: Mapped[int] = mapped_column(BigInteger)  # ID on server
+    server_user_id: Mapped[int] = mapped_column(BigInteger)
     username: Mapped[str] = mapped_column(String(50))
-    hashed_password: Mapped[str] = mapped_column(String(100), nullable=False) # bcrypt hashed password
+    hashed_password: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # Исправленные отношения
+    contacts: Mapped[List["Contact"]] = relationship(
+        "Contact",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+
+    messages: Mapped[List["Message"]] = relationship(
+        "Message",
+        back_populates="local_user",
+        cascade="all, delete-orphan"
+    )
+
 
 class Contact(Base):
     __tablename__ = "contacts"
@@ -26,17 +40,24 @@ class Contact(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_user_id: Mapped[int] = mapped_column(BigInteger)  # ID contact in server
-    status: Mapped[Optional[str]]
+    local_user_id: Mapped[int] = mapped_column(ForeignKey("local_users.id", ondelete="CASCADE"))
+    server_user_id: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[Optional[str]] = mapped_column(String(50))
     username: Mapped[str] = mapped_column(String(50))
     ecdh_public_key: Mapped[str] = mapped_column(Text)
     last_seen: Mapped[Optional[datetime]]
 
+    user: Mapped["LocalUser"] = relationship(
+        "LocalUser",
+        back_populates="contacts"
+    )
+
     messages: Mapped[List["Message"]] = relationship(
         "Message",
         back_populates="contact",
-        foreign_keys="Message.contact_id"
+        cascade="all, delete-orphan"
     )
+
 
 class Message(Base):
     __tablename__ = "messages"
@@ -50,15 +71,22 @@ class Message(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_message_id: Mapped[int]  # ID message on server
-    contact_id: Mapped[int] = mapped_column(ForeignKey("contacts.id"))
+    local_user_id: Mapped[int] = mapped_column(ForeignKey("local_users.id", ondelete="CASCADE"))
+    server_message_id: Mapped[int]
+    contact_id: Mapped[int] = mapped_column(ForeignKey("contacts.id", ondelete="CASCADE"))
     content: Mapped[bytes] = mapped_column(LargeBinary)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    type: Mapped[str] = mapped_column(String(20)) # "text", "image", "video", "audio", "file"
-    is_outgoing: Mapped[bool]  # True - outgoing, False - incoming
+    type: Mapped[str] = mapped_column(String(20))
+    is_outgoing: Mapped[bool]
     is_delivered: Mapped[bool] = mapped_column(default=False)
 
+    # Исправленные отношения
     contact: Mapped["Contact"] = relationship(
-        back_populates="messages",
-        foreign_keys=[contact_id]
+        "Contact",
+        back_populates="messages"
+    )
+
+    local_user: Mapped["LocalUser"] = relationship(
+        "LocalUser",
+        back_populates="messages"
     )

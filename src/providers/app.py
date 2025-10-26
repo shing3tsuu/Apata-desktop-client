@@ -1,5 +1,4 @@
 import logging
-from venv import logger
 
 from sqlalchemy.pool import StaticPool
 from typing import AsyncIterable
@@ -31,7 +30,7 @@ from src.adapters.encryption.storage import EncryptedKeyStorage
 
 class AppProvider(Provider):
     scope = Scope.APP
-    @provide(scope=Scope.REQUEST)
+    @provide(scope=Scope.APP)
     async def logger(self) -> logging.Logger:
         logging.basicConfig(
             level=logging.INFO,
@@ -67,7 +66,7 @@ class AppProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    async def api_client(self) -> CommonHTTPClient:
+    async def api_client(self, logger: logging.Logger) -> CommonHTTPClient:
         client = CommonHTTPClient(
             base_url="http://127.0.0.1:8000/",
             timeout=60.0,

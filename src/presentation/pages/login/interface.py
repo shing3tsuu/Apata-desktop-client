@@ -3,23 +3,23 @@ from random import randint
 import asyncio
 
 from .manager import AuthManager
-from src.presentation.pages import AppState
+from src.presentation.pages import AppState, Container
 
 # Style configuration
 COLOR_ACCENT = "#FFFFFF"
 COLOR_TEXT = "#FFFFFF"
 COLOR_INPUT_BG = "#282F32"
-COLOR_SUCCESS = "#00FF00"
+COLOR_SUCCESS = "#7FFFD4"
 COLOR_ERROR = "#FF4444"
 FONT_FAMILY = "RobotoSlab"
 
-async def login_interface(page, change_screen, app_state: AppState, **kwargs):
+async def login_interface(page, change_screen, app_state, container, **kwargs):
     page.title = "APATA"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
     # Initializing the authentication manager
-    auth_manager = AuthManager(app_state)
+    auth_manager = AuthManager(app_state, container)
 
     # System Title
     title = ft.Container(

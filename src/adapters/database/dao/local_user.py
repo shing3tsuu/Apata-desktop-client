@@ -16,7 +16,7 @@ class AbstractLocalUserDAO(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def get_user_data(self) -> LocalUserDTO | None:
+    async def get_user_data(self, user: LocalUserRequestDTO) -> LocalUserDTO | None:
         raise NotImplementedError()
 
     @abstractmethod
@@ -32,7 +32,7 @@ class LocalUserDAO(AbstractLocalUserDAO):
 
     async def add_user(self, user: LocalUserRequestDTO) -> LocalUserDTO:
         try:
-            existing_user = await self._session.scalar(select(LocalUser).where(LocalUser.id == 1))
+            existing_user = await self._session.scalar(select(LocalUser).where(LocalUser.username == user.username))
             if existing_user:
                 raise UserAlreadyExistsError("Local user already exists")
 
@@ -49,9 +49,9 @@ class LocalUserDAO(AbstractLocalUserDAO):
             self._logger.error(f"Error adding user in database: {e}")
             return None
 
-    async def get_user_data(self) -> LocalUserDTO | None:
+    async def get_user_data(self, user: LocalUserRequestDTO) -> LocalUserDTO | None:
         try:
-            stmt = select(LocalUser).where(LocalUser.id == 1)
+            stmt = select(LocalUser).where(LocalUser.username == user.username)
             result = await self._session.scalar(stmt)
             if not result:
                 return None
@@ -65,7 +65,7 @@ class LocalUserDAO(AbstractLocalUserDAO):
         try:
             stmt = (
                 update(LocalUser)
-                .where(LocalUser.id == 1)
+                .where(LocalUser.username == user.username)
                 .values(**user.model_dump(exclude_unset=True))
                 .returning(LocalUser)
             )

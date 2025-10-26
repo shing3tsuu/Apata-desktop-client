@@ -177,7 +177,7 @@ class AuthHTTPDAO:
         if not self._current_token:
             raise ValueError("No authentication token available")
 
-        self._http_client.set_auth_token(_current_token)
+        self._http_client.set_auth_token(self._current_token)
 
         data = {"ecdsa_public_key": ecdsa_public_key}
         self._logger.info("Updating ECDSA public key")
@@ -233,31 +233,3 @@ class AuthHTTPDAO:
         except Exception as e:
             self._logger.error(f"Error refreshing token: {e}")
             raise
-
-    async def validate_session(self) -> bool:
-        """
-        Checking the validity of the current session
-        :return:
-        """
-        if not self._current_token:
-            return False
-
-        try:
-            await self.get_current_user()
-            return True
-        except APIError as e:
-            if e.status_code == 401:
-                return False
-            return True
-        except Exception:
-            return True
-
-    def get_session_status(self) -> dict[str, Any]:
-        """
-        Getting the status of the current session
-        :return:
-        """
-        return {
-            "has_token": self._current_token is not None,
-            "token_length": len(self._current_token) if self._current_token else 0
-        }

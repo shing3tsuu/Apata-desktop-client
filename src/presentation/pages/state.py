@@ -49,7 +49,8 @@ class Message:
 @dataclass
 class AppState:
     username: str | None = None
-    user_id: int | None = None
+    local_user_id: int | None = None
+    server_user_id: int | None = None
     password: str | None = None
     master_key: bytes | None = None
     ecdsa_private_key: str | None = None
@@ -75,8 +76,6 @@ class AppState:
     contacts_cache: list[Contact] = None
     messages_cache: list[Message] = None
 
-    _container: AsyncContainer = None
-
     def __post_init__(self):
         if self.public_keys_cache is None:
             self.public_keys_cache = {}
@@ -88,7 +87,8 @@ class AppState:
     def update_from_login(
             self,
             username: str,
-            user_id: int,
+            local_user_id: int,
+            server_user_id: int,
             password: str,
             master_key: bytes,
             ecdsa_private_key: str,
@@ -96,7 +96,8 @@ class AppState:
             token: str,
     ):
         self.username = username
-        self.user_id = user_id
+        self.local_user_id = local_user_id
+        self.server_user_id = server_user_id
         self.password = password
         self.master_key = master_key
         self.ecdsa_private_key = ecdsa_private_key
@@ -111,17 +112,21 @@ class AppState:
     def clear(self):
         self.token = None
         self.username = None
-        self.user_id = None
+        self.local_user_id = None
+        self.server_user_id = None
         self.master_key = None
         self.ecdsa_private_key = None
         self.ecdh_public_key = None
         self.ecdh_private_key = None
         self.is_authenticated = False
         self.public_keys_cache.clear()
+        self.contacts_cache = []
+        self.messages_cache = []
 
     def get_session_info(self) -> dict[str, Any]:
         return {
             "username": self.username,
-            "user_id": self.user_id,
+            "local_user_id": self.local_user_id,
+            "server_user_id": self.server_user_id,
             "is_authenticated": self.is_authenticated
         }

@@ -3,24 +3,26 @@ from datetime import datetime
 from typing import List
 
 class LocalUserRequestDTO(BaseModel):
-    server_user_id: int
-    username: str
-    hashed_password: str
+    server_user_id: int | None = None
+    username: str | None = None
+    hashed_password: str | None = None
 
 class LocalUserDTO(LocalUserRequestDTO):
     id: int
 
 class ContactRequestDTO(BaseModel):
-    server_user_id: int
+    local_user_id: int | None = None
+    server_user_id: int | None = None
     status: str | None = None
-    username: str
-    ecdh_public_key: str
+    username: str | None = None
+    ecdh_public_key: str | None = None
     last_seen: datetime | None = None
 
 class ContactDTO(ContactRequestDTO):
     id: int
 
 class MessageRequestDTO(BaseModel):
+    local_user_id: int
     server_message_id: int
     contact_id: int
     content: bytes

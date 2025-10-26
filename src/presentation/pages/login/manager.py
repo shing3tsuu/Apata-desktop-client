@@ -1,10 +1,10 @@
 import logging
 from typing import Tuple, Optional
 from src.exceptions import *
-from dishka import make_async_container
+from dishka import make_async_container, FromDishka
 
 from src.providers import AppProvider
-from src.presentation.pages import AppState
+from src.presentation.pages import AppState, Container
 
 from src.adapters.api.service import AuthHTTPService
 
@@ -15,44 +15,12 @@ from src.adapters.encryption.storage import EncryptedKeyStorage
 from src.adapters.encryption.service import AbstractPasswordHasher
 
 
-class AuthManager:
-    def __init__(self, app_state):
-        self.state = app_state
-        self.logger = logging.getLogger(__name__)
-
-    async def setup_services(self) -> bool:
-        try:
-            self.state._container = make_async_container(AppProvider())
-
-            async with self.state._container() as request_container:
-                # httpx
-                self.state.auth_http_service = await request_container.get(AuthHTTPService)
-                # sqlalchemy
-                self.state.local_user_service = await request_container.get(LocalUserService)
-                # cryptography and keyring storage
-                self.state.password_hasher = await request_container.get(AbstractPasswordHasher)
-                self.state.key_storage = await request_container.get(EncryptedKeyStorage)
-
-            # Check that all services are initialized
-            required_services = [
-                self.state.auth_http_service,
-                self.state.local_user_service,
-                self.state.key_storage,
-                self.state.password_hasher,
-            ]
-
-            if any(service is None for service in required_services):
-                self.logger.critical("Some services failed to initialize")
-                return False
-
-            self.logger.info("All services initialized successfully")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Service setup failed: {e}")
-            return False
-
-    async def authenticate_user(self, username: str, password: str) -> tuple[bool, str]:
+class AuthManager(Container):
+    async def authenticate_user(
+            self,
+            username: str,
+            password: str,
+    ) -> tuple[bool, str]:
         """
         Universal authentication with improved error handling
         - Checks if the user exists in the local database, if not, registers them
@@ -65,7 +33,11 @@ class AuthManager:
 
         try:
             # Check if the user exists in the local database
-            local_user = await self.state.local_user_service.get_user_data()
+            local_user = await self.state.local_user_service.get_user_data(
+                LocalUserRequestDTO(
+                    username=username,
+                )
+            )
 
             if local_user is None:
                 self.logger.info(f"No local user found, proceeding with registration: {username}")
@@ -141,20 +113,27 @@ class AuthManager:
             # 5. Saving to a local database
             hashed_password = await self.state.password_hasher.hashing(password)
 
-            user_dto = LocalUserRequestDTO(
-                server_user_id=data["id"],
-                username=username,
-                hashed_password=hashed_password
+            await self.state.local_user_service.add_user(
+                LocalUserRequestDTO(
+                    server_user_id=data["id"],
+                    username=username,
+                    hashed_password=hashed_password
+                )
             )
 
-            await self.state.local_user_service.add_user(user_dto)
-
             master_key = await self.state.key_storage.get_master_key(username=username, password=password)
+
+            local_user = await self.state.local_user_service.get_user_data(
+                LocalUserRequestDTO(
+                    username=username,
+                )
+            )
 
             # 6. Status Update
             self.state.update_from_login(
                 username=username,
-                user_id=data["id"],
+                local_user_id=local_user.id,
+                server_user_id=data["id"],
                 password=password,
                 master_key=master_key,
                 ecdsa_private_key=ecdsa_private_key,
@@ -223,7 +202,8 @@ class AuthManager:
             # 5. Status update
             self.state.update_from_login(
                 username=username,
-                user_id=data["id"],
+                local_user_id=local_user.id,
+                server_user_id=data["id"],
                 password=password,
                 master_key=master_key,
                 ecdsa_private_key=ecdsa_private_key,

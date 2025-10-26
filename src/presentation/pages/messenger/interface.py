@@ -11,7 +11,7 @@ from .manager import MessengerManager
 # Style configuration
 COLOR_ACCENT = "#FFFFFF"
 COLOR_TEXT = "#FFFFFF"
-COLOR_SUCCESS = "#00FF00"
+COLOR_SUCCESS = "#7FFFD4"
 COLOR_WARNING = "#FFFF00"
 COLOR_ERROR = "#FF4444"
 COLOR_SECONDARY = "#666666"
@@ -21,12 +21,12 @@ COLOR_BG_HOVER = "#2A2A2A"
 FONT_FAMILY = "RobotoSlab"
 
 
-async def messenger_interface(page, change_screen, app_state, **kwargs):
+async def messenger_interface(page, change_screen, app_state, container, **kwargs):
     page.title = "APATA - SECURE MESSENGER"
     page.bgcolor = COLOR_BG_DARK
 
     # Initialize stub managers
-    messenger_manager = MessengerManager(app_state)
+    messenger_manager = MessengerManager(app_state, container)
 
     # State variables
     selected_contact = None
@@ -55,6 +55,12 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
                 weight=ft.FontWeight.BOLD
             ),
             ft.Container(expand=True),
+            ft.IconButton(
+                icon=ft.Icons.PERSON_ADD,
+                icon_color=COLOR_ACCENT,
+                tooltip="Add new contact",
+                on_click=lambda _: asyncio.create_task(change_screen("contact"))
+            ),
             ft.IconButton(
                 icon=ft.Icons.REFRESH,
                 icon_color=COLOR_ACCENT,
@@ -112,7 +118,7 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
 
     # Message input
     message_input = ft.TextField(
-        hint_text="TYPE ENCRYPTED MESSAGE...",
+        hint_text="TYPE MESSAGE...",
         hint_style=ft.TextStyle(color=COLOR_SECONDARY, font_family=FONT_FAMILY),
         text_style=ft.TextStyle(color=COLOR_TEXT, font_family=FONT_FAMILY),
         bgcolor=ft.Colors.with_opacity(0.05, COLOR_ACCENT),
@@ -159,7 +165,7 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
             content=ft.Row([
                 ft.Text("NO CONTACT SELECTED", color=COLOR_SECONDARY, size=14),
                 ft.Container(expand=True),
-                ft.Text("ENCRYPTION: ECDH-AES256", color=COLOR_SUCCESS, size=10)
+                ft.Text("ENCRYPTION: X25519-AES256GCM", color=COLOR_SUCCESS, size=10)
             ]),
             padding=15,
             blur=ft.Blur(2, 2, ft.BlurTileMode.REPEATED),
@@ -186,7 +192,7 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
         content=ft.Row([
             ft.Text("APATA TERMINAL", color=ft.Colors.with_opacity(0.5, COLOR_ACCENT), size=10),
             ft.Container(width=20),
-            ft.Text("END-TO-END ENCRYPTION ACTIVE", color=COLOR_SUCCESS, size=12),
+            ft.Text("SECURE CONNECTION ESTABLISHED", color=COLOR_SUCCESS, size=12),
             ft.Container(width=20),
             ft.Text(f"SESSION: {randint(100000, 999999)}", color=ft.Colors.with_opacity(0.5, COLOR_ACCENT), size=10),
             ft.Container(expand=True),
@@ -304,7 +310,7 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
                 content=ft.Row([
                     ft.Text(contact.username, color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
                     ft.Container(expand=True),
-                    ft.Text("ENCRYPTION: ECDH-AES256", color=COLOR_SUCCESS, size=10)
+                    ft.Text("ENCRYPTION: X25519-AES256GCM", color=COLOR_SUCCESS, size=10)
                 ]),
                 padding=15,
                 bgcolor=ft.Colors.with_opacity(0.05, COLOR_ACCENT)
@@ -441,6 +447,7 @@ async def messenger_interface(page, change_screen, app_state, **kwargs):
     async def logout():
         # TODO: Implement proper logout logic
         await messenger_manager.stop_polling()
+        await messenger_manager.logout()
         await change_screen("login")
 
     # Initialize the interface
