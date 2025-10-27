@@ -1,10 +1,5 @@
 # APATA - Encrypted Messenger
 
-![Image alt](https://github.com/shing3tsuu/Apata-desktop-client/raw/assets/main1.png)
-![Image alt](https://github.com/shing3tsuu/Apata-desktop-client/raw/assets/main2.png)
-![Image alt](https://github.com/shing3tsuu/Apata-desktop-client/raw/assets/contact1.png)
-![Image alt](https://github.com/shing3tsuu/Apata-desktop-client/raw/assets/contact2.png)
-
 A secure, end-to-end encrypted desktop messaging application built with Python and Flet, featuring military-grade encryption and a sleek terminal-style interface.
 
 ## 🛡️ Core Features
@@ -29,7 +24,13 @@ A secure, end-to-end encrypted desktop messaging application built with Python a
 - **Multiple Screens**: Login, Loading, Messenger, Contacts and others
 - **Responsive Design** with 960x720 window size
 - **Real-time Status Updates**
-
+---
+![Image alt](https://github.com/shing3tsuu/Apata-desktop-client/raw/assets/main1.png)
+![Image alt](https://github.com/shing3tsuu/Apata-desktop-client/raw/assets/main2.png)
+---
+![Image alt](https://github.com/shing3tsuu/Apata-desktop-client/raw/assets/contact1.png)
+![Image alt](https://github.com/shing3tsuu/Apata-desktop-client/raw/assets/contact2.png)
+---
 ## 🏗️ Architecture & Technologies
 
 ### Architecture Pattern
