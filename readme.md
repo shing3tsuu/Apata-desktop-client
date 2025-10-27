@@ -1,6 +1,6 @@
 # APATA - Encrypted Messenger
 
-![Watch the video](https://github.com/shing3tsuu/Apata-desktop-client/blow/assets/APATA.mp4)
+![Watch the video](https://github.com/shing3tsuu/Apata-desktop-client/blob/assets/APATA.mp4)
 
 A secure, end-to-end encrypted desktop messaging application built with Python and Flet, featuring military-grade encryption and a sleek terminal-style interface.
 
