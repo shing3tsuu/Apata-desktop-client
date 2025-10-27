@@ -6,22 +6,22 @@ A secure, end-to-end encrypted desktop messaging application built with Python a
 
 ### Security & Encryption
 - **End-to-End Encryption** using AES-256-GCM for message content
-- **Key Exchange** via X25519 (ECDH) for perfect forward secrecy
-- **Digital Signatures** using ECDSA (SECP384R1) for authentication
-- **Secure Key Storage** with password-derived master key encryption
-- **Bcrypt Password Hashing** with timing attack protection
+- **Key Exchange** via X25519 (ECDH) for perfect forward secrecy for every session
+- **Digital Signatures** using ECDSA (SECP384R1) for authentication (challenge-response)
+- **Secure Key Storage** with password-derived master key encryption (keyring, pbkdf2 (600000 itetations))
+- **Bcrypt Password Hashing** with timing attack protection (12 rounds)
 
 ### Application Functionality
 - **Secure User Registration & Authentication**
 - **Encrypted Message Exchange**
-- **Contact Management** (add, search, pending requests)
-- **Real-time Message Polling**
+- **Contact Management** (add, search, accept, reject, pending requests)
+- **Real-time Message Polling** (long polling + postgresq listen/notify)
 - **Message Delivery Status**
 - **Session Management**
 
 ### User Interface
-- **Terminal-style Interface** with retro aesthetic
-- **Multiple Screens**: Login, Loading, Messenger, Contacts
+- **Terminal-style Interface** (black, white, grey and cyan colors)
+- **Multiple Screens**: Login, Loading, Messenger, Contacts and others
 - **Responsive Design** with 960x720 window size
 - **Real-time Status Updates**
 
@@ -36,7 +36,7 @@ A secure, end-to-end encrypted desktop messaging application built with Python a
 - **Frontend**: Flet (Python UI framework)
 - **HTTP Client**: httpx with retry logic and timeout handling
 - **Database**: SQLite with SQLAlchemy Async ORM
-- **Cryptography**: cryptography library (AES, ECDH, ECDSA)
+- **Cryptography**: cryptography.hazmat primitives (AES, ECDH, ECDSA, SHA-2, PBKDF2, bcrypt)
 - **Dependency Management**: Dishka IoC container
 
 ### Encryption Layer
@@ -47,16 +47,24 @@ A secure, end-to-end encrypted desktop messaging application built with Python a
 - `KeyManager`: Secure key derivation and management
 
 ### Service Layer
-- `AuthHTTPService`: Handles user registration and authentication
-- `MessageHTTPService`: Manages encrypted message exchange
-- `ContactHTTPService`: Handles contact management
+
+httpx layers:
+- `AuthHTTPDAO/Service`: Handles user registration and authentication
+- `MessageHTTPDAO/Service`: Manages encrypted message exchange
+- `ContactHTTPDAO/Service`: Handles contact management
 - `EncryptionService`: Coordinates cryptographic operations
+
+sqlalchemy layers:
+- `LocalUserDAO/Service`: Stores local user data (multi-user support available)
+- `ContactDAO/Service`: Local storage of users contacts
+- `MessageDAO/Service`: Local storage of all users messages in encrypted form (kek from password via aes)
+- 'DTO': pydantic models for convenient work with the database, validation and serialization
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 - Python 3.8+
-- Dependencies: flet, httpx, sqlalchemy, cryptography, dishka
+- Dependencies: flet, httpx, sqlalchemy, pydantic, cryptography, dishka
 
 ### Installation
 1. Clone the repository
