@@ -146,7 +146,6 @@ class TestAuth(Container):
 
             step_start = t.time()
             self.state.key_storage.clear_storage(username)
-            self.state.key_storage.clear_storage("shingetsu")
             empty_ecdsa_private_key = await self.state.key_storage.get_ecdsa_private_key(username, password)
             assert empty_ecdsa_private_key is None
             self.state.clear()
@@ -171,4 +170,5 @@ async def test_register():
         await test_auth.setup_services()
         await test_auth.register(test_user, test_password)
     finally:
+
         await container.close()
