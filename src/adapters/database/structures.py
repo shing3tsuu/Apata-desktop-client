@@ -18,7 +18,6 @@ class LocalUser(Base):
     username: Mapped[str] = mapped_column(String(50))
     hashed_password: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    # Исправленные отношения
     contacts: Mapped[List["Contact"]] = relationship(
         "Contact",
         back_populates="user",
@@ -81,7 +80,6 @@ class Message(Base):
     is_outgoing: Mapped[bool]
     is_delivered: Mapped[bool] = mapped_column(default=False)
 
-    # Исправленные отношения
     contact: Mapped["Contact"] = relationship(
         "Contact",
         back_populates="messages"
