@@ -35,7 +35,7 @@ class EncryptionService:
             message: str,
             sender_private_key: str,
             recipient_public_key: str
-    ) -> bytes:
+    ) -> str:
         context = {
             "operation": "encrypt_message",
             "message_length": len(message),
@@ -59,14 +59,14 @@ class EncryptionService:
             context["shared_key_length"] = len(shared_key) if shared_key else 0
 
             # Encrypt message with AES
-            encrypted_message_bytes = await self._aes_cipher.encrypt(message, shared_key)
+            encrypted_message = await self._aes_cipher.encrypt(message, shared_key)
 
             self._logger.info(
                 "Message encrypted successfully",
-                extra={"context": {**context, "status": "success", "encrypted_length": len(encrypted_message_bytes)}}
+                extra={"context": {**context, "status": "success", "encrypted_length": len(encrypted_message)}}
             )
 
-            return encrypted_message_bytes
+            return encrypted_message # base64 encoded
 
         except InvalidKeyError as e:
             self._logger.error(
