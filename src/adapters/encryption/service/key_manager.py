@@ -27,7 +27,7 @@ class KeyManager:
             iterations = self.iterations
 
         kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA512(),
+            algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
             iterations=iterations,
@@ -39,18 +39,13 @@ class KeyManager:
         """Generate a random 256-bit master key"""
         return secrets.token_bytes(32)
 
-    async def encrypt_with_master_key(self, data: bytes, master_key: bytes) -> Optional[bytes]:
+    async def encrypt_with_master_key(self, data: bytes, master_key: bytes) -> bytes | None:
         """Encrypt data using AES-GCM with master key"""
         if not data or not master_key:
             self.logger.error("Cannot encrypt: data or master key is empty")
             return None
-
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._encrypt_with_master_key, data, master_key)
-        except Exception as e:
-            self.logger.error("Failed to encrypt data: %s", str(e), exc_info=True)
-            return None
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._encrypt_with_master_key, data, master_key)
 
     def _encrypt_with_master_key(self, data: bytes, master_key: bytes) -> bytes:
         if len(master_key) != 32:
@@ -66,18 +61,14 @@ class KeyManager:
         ciphertext = encryptor.update(data) + encryptor.finalize()
         return nonce + encryptor.tag + ciphertext
 
-    async def decrypt_with_master_key(self, encrypted_data: bytes, master_key: bytes) -> Optional[bytes]:
+    async def decrypt_with_master_key(self, encrypted_data: bytes, master_key: bytes) -> bytes | None:
         """Decrypt data using AES-GCM with master key"""
         if not encrypted_data or not master_key:
             self.logger.error("Cannot decrypt: encrypted data or master key is empty")
             return None
 
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._decrypt_with_master_key, encrypted_data, master_key)
-        except (InvalidTag, ValueError) as e:
-            self.logger.error("Failed to decrypt data: %s", str(e), exc_info=True)
-            return None
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._decrypt_with_master_key, encrypted_data, master_key)
 
     def _decrypt_with_master_key(self, encrypted_data: bytes, master_key: bytes) -> bytes:
         if len(encrypted_data) < 28:  # 12 (nonce) + 16 (tag)
@@ -101,12 +92,8 @@ class KeyManager:
             self.logger.error("Cannot encrypt master key: master key or password is empty")
             return None, None
 
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._encrypt_master_key, master_key, password)
-        except Exception as e:
-            self.logger.error("Failed to encrypt master key: %s", str(e), exc_info=True)
-            return None, None
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._encrypt_master_key, master_key, password)
 
     def _encrypt_master_key(self, master_key: bytes, password: str) -> tuple[bytes, bytes]:
         salt = os.urandom(16)
@@ -130,12 +117,8 @@ class KeyManager:
             self.logger.error("Cannot decrypt master key: missing required parameters")
             return None
 
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._decrypt_master_key, encrypted_master_key, password, salt)
-        except Exception as e:
-            self.logger.error("Failed to decrypt master key: %s", str(e), exc_info=True)
-            return None
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._decrypt_master_key, encrypted_master_key, password, salt)
 
     def _decrypt_master_key(self, encrypted_master_key: bytes, password: str, salt: bytes) -> bytes:
         if len(encrypted_master_key) < 28:  # 12 (nonce) + 16 (tag)
@@ -154,7 +137,4 @@ class KeyManager:
         )
         decryptor = cipher.decryptor()
 
-        try:
-            return decryptor.update(ciphertext) + decryptor.finalize()
-        except InvalidTag:
-            raise ValueError("Invalid password or corrupted data")
+        return decryptor.update(ciphertext) + decryptor.finalize()

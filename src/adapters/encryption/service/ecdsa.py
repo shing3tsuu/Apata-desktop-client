@@ -39,18 +39,14 @@ class AbstractECDSASignature(ABC):
         """
         raise NotImplementedError()
 
-class SECP384R1Signature(AbstractECDSASignature):
+class SECP256R1Signature(AbstractECDSASignature):
     def __init__(self, logger: logging.Logger | None = None):
         self.logger = logger or logging.getLogger(__name__)
-        self.curve = ec.SECP384R1()
+        self.curve = ec.SECP256R1()
 
     async def generate_key_pair(self) -> tuple[str, str]:
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._generate_key_pair)
-        except Exception as e:
-            self.logger.error("Error generating key pair: %s", str(e))
-            raise
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._generate_key_pair)
 
     def _generate_key_pair(self) -> Tuple[str, str]:
         private_key = ec.generate_private_key(self.curve, default_backend())
@@ -70,16 +66,11 @@ class SECP384R1Signature(AbstractECDSASignature):
         return private_pem, public_pem
 
     async def sign_message(self, private_key_pem: str, message: str) -> str:
-        try:
-            loop = asyncio.get_running_loop()
-            signature = await loop.run_in_executor(
-                None, self._sign_message, private_key_pem, message
-            )
-            return base64.b64encode(signature).decode('utf-8')
-        except Exception as e:
-            self.logger.error("Error signing message: %s", str(e))
-            raise
-
+        loop = asyncio.get_running_loop()
+        signature = await loop.run_in_executor(
+            None, self._sign_message, private_key_pem, message
+        )
+        return base64.b64encode(signature).decode('utf-8')
     def _sign_message(self, private_key_pem: str, message: str) -> bytes:
         private_key = serialization.load_pem_private_key(
             private_key_pem.encode(),
@@ -89,20 +80,16 @@ class SECP384R1Signature(AbstractECDSASignature):
 
         signature = private_key.sign(
             message.encode(),
-            ec.ECDSA(hashes.SHA384())
+            ec.ECDSA(hashes.SHA256())
         )
 
         return signature
 
     async def verify_signature(self, public_key_pem: str, message: str, signature: str) -> bool:
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, self._verify_signature, public_key_pem, message, signature
-            )
-        except Exception as e:
-            self.logger.warning("Signature verification failed: %s", str(e))
-            return False
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._verify_signature, public_key_pem, message, signature
+        )
 
     def _verify_signature(self, public_key_pem: str, message: str, signature: str) -> bool:
         public_key = serialization.load_pem_public_key(
@@ -115,7 +102,78 @@ class SECP384R1Signature(AbstractECDSASignature):
         public_key.verify(
             signature_bytes,
             message.encode(),
-            ec.ECDSA(hashes.SHA384())
+            ec.ECDSA(hashes.SHA256())
         )
 
         return True
+
+class SECP521R1Signature(AbstractECDSASignature):
+    def __init__(self, logger: logging.Logger | None = None):
+        self.logger = logger or logging.getLogger(__name__)
+        self.curve = ec.SECP521R1()
+
+    async def generate_key_pair(self) -> tuple[str, str]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._generate_key_pair)
+
+    def _generate_key_pair(self) -> Tuple[str, str]:
+        private_key = ec.generate_private_key(self.curve, default_backend())
+
+        private_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ).decode('utf-8')
+
+        public_key = private_key.public_key()
+        public_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode('utf-8')
+
+        return private_pem, public_pem
+
+    async def sign_message(self, private_key_pem: str, message: str) -> str:
+        loop = asyncio.get_running_loop()
+        signature = await loop.run_in_executor(
+            None, self._sign_message, private_key_pem, message
+        )
+        return base64.b64encode(signature).decode('utf-8')
+
+    def _sign_message(self, private_key_pem: str, message: str) -> bytes:
+        private_key = serialization.load_pem_private_key(
+            private_key_pem.encode(),
+            password=None,
+            backend=default_backend()
+        )
+
+        signature = private_key.sign(
+            message.encode(),
+            ec.ECDSA(hashes.SHA512())
+        )
+
+        return signature
+
+    async def verify_signature(self, public_key_pem: str, message: str, signature: str) -> bool:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._verify_signature, public_key_pem, message, signature
+        )
+
+    def _verify_signature(self, public_key_pem: str, message: str, signature: str) -> bool:
+        public_key = serialization.load_pem_public_key(
+            public_key_pem.encode(),
+            backend=default_backend()
+        )
+
+        signature_bytes = base64.b64decode(signature)
+
+        try:
+            public_key.verify(
+                signature_bytes,
+                message.encode(),
+                ec.ECDSA(hashes.SHA512())
+            )
+            return True
+        except Exception:
+            return False

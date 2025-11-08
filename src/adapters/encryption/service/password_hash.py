@@ -61,21 +61,21 @@ class BcryptPasswordHasher(AbstractPasswordHasher):
         return await loop.run_in_executor(None, self._safe_hashing, password)
 
     def _safe_hashing(self, password: str) -> str:
-        if not password:
-            self.logger.error("Empty password provided for hashing")
-            raise ValueError("Password cannot be empty")
-
-        if len(password) < self.min_password_length:
-            self.logger.error(f"Password too short, minimum {self.min_password_length} characters required")
-            raise ValueError(f"Password must be at least {self.min_password_length} characters long")
-
         try:
+            if not password:
+                self.logger.error("Empty password provided for hashing")
+                raise ValueError("Password cannot be empty")
+
+            if len(password) < self.min_password_length:
+                self.logger.error(f"Password too short, minimum {self.min_password_length} characters required")
+                raise ValueError(f"Password must be at least {self.min_password_length} characters long")
+
             salt = bcrypt.gensalt(rounds=self.cost)
             hashed = bcrypt.hashpw(password.encode(), salt)
             return hashed.decode('utf-8')
         except Exception as e:
-            self.logger.error(f"Password hashing failed: {str(e)}", exc_info=True)
-            raise RuntimeError("Password hashing failed") from e
+            self.logger.error(f"Error during password hashing: {e}")
+            raise e
 
 
     async def compare(self, password: str, hashed: str) -> bool:
@@ -83,22 +83,22 @@ class BcryptPasswordHasher(AbstractPasswordHasher):
         return await loop.run_in_executor(None, self._safe_compare, password, hashed)
 
     def _safe_compare(self, password: str, hashed: str) -> bool:
-        if not password or not hashed:
-            self.logger.warning("Empty password or hash provided for comparison")
-            return False
-
         try:
+            if not password or not hashed:
+                self.logger.warning("Empty password or hash provided for comparison")
+                return False
+
             # Use dummy hash if the provided hash is invalid
             hash_bytes = hashed.encode('utf-8') if self._is_valid_hash(hashed) else self.DUMMY_HASH
             return bcrypt.checkpw(password.encode(), hash_bytes)
         except Exception as e:
-            self.logger.error(f"Password comparison error: {str(e)}", exc_info=True)
+            self.logger.error(f"Error during password comparison: {e}")
             return False
 
     @staticmethod
     def _is_valid_hash(hashed: str) -> bool:
         return (
-                isinstance(hashed, str) and
-                hashed.startswith(('$2a$', '$2b$', '$2y$')) and
-                len(hashed) == 60
+            isinstance(hashed, str) and
+            hashed.startswith(('$2a$', '$2b$', '$2y$')) and
+            len(hashed) == 60
         )

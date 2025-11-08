@@ -1,49 +1,89 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 import base64
 import asyncio
 from datetime import datetime
 import logging
+import json
 
 from ..dao.message import MessageHTTPDAO
 from ..dao.auth import AuthHTTPDAO
+from ..dao.websocket import WebSocketDAO
 from .encryption import EncryptionService
-from src.exceptions import MessageDeliveryError, EncryptionError
+from src.exceptions import (
+    MessageDeliveryError,
+    EncryptionError,
+    DecryptionError,
+    NetworkError,
+    InfrastructureError,
+    AuthenticationError,
+    APIError,
+    NonRetryableError
+)
+
 
 class MessageHTTPService:
+    __slots__ = (
+        "_message_dao",
+        "_auth_dao",
+        "_encryption_service",
+        "_websocket_dao",
+        "_logger",
+        "_current_token",
+        "_user_private_key",
+        "_message_callback",
+        "_is_listening",
+        "_listening_task",
+        "__weakref__"
+    )
     def __init__(
             self,
             message_dao: MessageHTTPDAO,
             auth_dao: AuthHTTPDAO,
             encryption_service: EncryptionService,
-            logger: logging.Logger = None
+            websocket_dao: WebSocketDAO,
+            logger: logging.Logger | None = None
     ):
         self._message_dao = message_dao
         self._auth_dao = auth_dao
         self._encryption_service = encryption_service
+        self._websocket_dao = websocket_dao
         self._logger = logger or logging.getLogger(__name__)
 
-        # State for managing long polling
-        self._is_polling = False
         self._current_token: str | None = None
-        self._polling_task: asyncio.Task | None = None
+        self._user_private_key: str | None = None
+        self._message_callback: Optional[Callable] = None
+        self._is_listening = False
+        self._listening_task: Optional[asyncio.Task] = None
+
+    def set_token(self, token: str):
+        """Set authentication token"""
+        self._current_token = token
+
+    def clear_token(self):
+        """Clear authentication token"""
+        self._current_token = None
 
     async def send_encrypted_message(
             self,
             recipient_id: int,
             message: str,
+            content_type: str,
             sender_private_key: str,
             sender_public_key: str,
             recipient_public_key: str
     ) -> dict[str, Any]:
-        """
-        Sending an encrypted message
-        :param recipient_id: Recipient ID
-        :param message: Message text
-        :param sender_private_key: Sender's private key
-        :param sender_public_key: Sender's public key
-        :param recipient_public_key: Recipient's public key
-        :return: Sending result
-        """
+        context = {
+            "operation": "send_encrypted_message",
+            "recipient_id": recipient_id,
+            "content_type": content_type,
+            "message_length": len(message)
+        }
+
+        self._logger.info(
+            f"Sending encrypted message to user {recipient_id}",
+            extra={"context": context}
+        )
+
         try:
             # Encrypt the message
             encrypted_message = await self._encryption_service.encrypt_message(
@@ -51,59 +91,134 @@ class MessageHTTPService:
                 sender_private_key=sender_private_key,
                 recipient_public_key=recipient_public_key
             )
+            context["encryption_success"] = True
+            context["encrypted_length"] = len(encrypted_message)
 
-            # Send the encrypted message
+            # Send via DAO
             result = await self._message_dao.send_message(
                 recipient_id=recipient_id,
                 message=encrypted_message,
-                ephemeral_public_key=sender_public_key
+                content_type=content_type,
+                ephemeral_public_key=sender_public_key,
+                token=self._current_token
             )
 
-            self._logger.info(f"Encrypted message sent to {recipient_id}")
+            self._logger.info(
+                f"Encrypted message sent successfully to {recipient_id}",
+                extra={"context": {**context, "status": "success"}}
+            )
+
             return result
 
+        except (EncryptionError, DecryptionError) as e:
+            self._logger.error(
+                "Encryption error while sending message",
+                extra={"context": context},
+                exc_info=True
+            )
+            raise MessageDeliveryError(
+                f"Message encryption failed: {str(e)}",
+                original_error=e,
+                context=context
+            ) from e
+
+        except AuthenticationError as e:
+            self._logger.warning(
+                f"Authentication failed while sending message: {str(e)}",
+                extra={"context": context}
+            )
+            self.clear_token()
+            raise
+
+        except APIError as e:
+            self._logger.error(
+                f"API error while sending message: {e.message}",
+                extra={"context": {**context, "status_code": e.status_code}}
+            )
+            raise MessageDeliveryError(
+                f"Message delivery API error: {e.message}",
+                original_error=e,
+                context=context
+            ) from e
+
         except Exception as e:
-            self._logger.error(f"Failed to send encrypted message: {e}")
-            raise MessageDeliveryError(f"Message delivery failed: {e}")
+            self._logger.error(
+                "Unexpected error while sending encrypted message",
+                extra={"context": context},
+                exc_info=True
+            )
+            raise InfrastructureError(
+                f"Failed to send encrypted message: {str(e)}",
+                original_error=e,
+                context=context
+            ) from e
 
     async def get_undelivered_messages(
             self,
             user_private_key: str,
     ) -> list[dict[str, Any]]:
-        """
-        Fetch undelivered messages
-        :param user_private_key:
-        :return:
-        """
-        # Fetch undelivered messages
-        response = await self._message_dao.get_undelivered_messages()
+        context = {
+            "operation": "get_undelivered_messages",
+            "has_private_key": bool(user_private_key)
+        }
 
-        if response.get("has_messages") and response.get("messages"):
+        self._logger.info(
+            "Retrieving undelivered messages",
+            extra={"context": context}
+        )
+
+        try:
+            response = await self._message_dao.get_undelivered_messages(token=self._current_token)
+
+            if not response.get("has_messages") or not response.get("messages"):
+                self._logger.debug(
+                    "No undelivered messages found",
+                    extra={"context": context}
+                )
+                return []
+
             encrypted_messages = response["messages"]
             message_ids = []
+            decrypted_messages = []
+            success_count = 0
+            failure_count = 0
+
+            context["total_messages"] = len(encrypted_messages)
 
             for message in encrypted_messages:
+                message_context = {
+                    **context,
+                    "message_id": message.get("id"),
+                    "sender_id": message.get("sender_id")
+                }
+
                 try:
-                    # Decrypt the message
                     decrypted_content = await self._encryption_service.decrypt_message(
-                        encrypted_message=message["message"],
+                        encrypted_message=message['message'],
                         recipient_private_key=user_private_key,
-                        sender_public_key=message["ephemeral_public_key"]
+                        sender_public_key=message['ephemeral_public_key']
                     )
 
-                    # Collecting the result
                     decrypted_message = {
                         **message,
                         "decrypted_content": decrypted_content,
                         "decryption_status": "success"
                     }
-
                     message_ids.append(message["id"])
-                    await message_callback(decrypted_message)
+                    decrypted_messages.append(decrypted_message)
+                    success_count += 1
 
-                except Exception as e:
-                    self._logger.error(f"Failed to process message {message.get('id')}: {e}")
-                    # Send an error message to the callback
+                    self._logger.debug(
+                        f"Successfully decrypted message {message['id']}",
+                        extra={"context": message_context}
+                    )
+
+                except DecryptionError as e:
+                    self._logger.error(
+                        f"Decryption failed for message {message.get('id')}, {str(e)}",
+                        extra={"context": message_context},
+                        exc_info=True
+                    )
                     error_message = {
                         **message,
                         "decrypted_content": None,
@@ -111,118 +226,358 @@ class MessageHTTPService:
                         "decryption_error": str(e)
                     }
                     message_ids.append(message["id"])
-                    await message_callback(error_message)
+                    decrypted_messages.append(error_message)
+                    failure_count += 1
 
-            # Confirm all processed messages
+                except Exception as e:
+                    self._logger.error(
+                        f"Unexpected error processing message {message.get('id')}",
+                        extra={"context": message_context},
+                        exc_info=True
+                    )
+                    error_message = {
+                        **message,
+                        "decrypted_content": None,
+                        "decryption_status": "error",
+                        "decryption_error": f"Unexpected error: {str(e)}"
+                    }
+                    message_ids.append(message["id"])
+                    decrypted_messages.append(error_message)
+                    failure_count += 1
+
+            # Acknowledge processed messages
             if message_ids:
-                await self._message_dao.ack_messages(message_ids)
+                await self._message_dao.ack_messages(message_ids=message_ids, token=self._current_token)
+                context["acknowledged_messages"] = len(message_ids)
 
-    async def start_message_polling(
+            self._logger.info(
+                f"Retrieved {success_count} messages ({failure_count} failures)",
+                extra={"context": {**context, "success_count": success_count, "failure_count": failure_count}}
+            )
+
+            return decrypted_messages
+
+        except AuthenticationError as e:
+            self._logger.warning(
+                f"Authentication failed while retrieving messages: {str(e)}",
+                extra={"context": context}
+            )
+            self.clear_token()
+            return []
+
+        except Exception as e:
+            self._logger.error(
+                f"Error getting undelivered messages: {str(e)}",
+                extra={"context": context},
+                exc_info=True
+            )
+            return []
+
+    async def start_websocket_listener(
             self,
             token: str,
             user_private_key: str,
-            message_callback: callable
-    ):
-        """
-        Start message polling
-        :param token:
-        :param user_private_key:
-        :param message_callback:
-        :return:
-        """
-        if self._is_polling:
-            self._logger.warning("Polling is already running")
-            return
+            message_callback: Callable
+    ) -> bool:
+        context = {
+            "operation": "start_websocket_listener",
+            "has_callback": bool(message_callback)
+        }
 
-        self._is_polling = True
-        self._current_token = token
-
-        self._polling_task = asyncio.create_task(
-            self._polling_loop(user_private_key, message_callback)
+        self._logger.info(
+            "Starting WebSocket listener",
+            extra={"context": context}
         )
 
-    async def _polling_loop(self, user_private_key, message_callback):
-        """
-        Long polling loop
-        :param user_private_key:
-        :param sender_public_keys:
-        :param message_callback:
-        :return:
-        """
-        while self._is_polling:
+        if self._is_listening:
+            self._logger.warning(
+                "WebSocket listener is already running",
+                extra={"context": context}
+            )
+            return False
+
+        try:
+            self._current_token = token
+            self._user_private_key = user_private_key
+            self._message_callback = message_callback
+
+            # Connect to WebSocket
+            connected = await self._websocket_dao.connect(token)
+            if not connected:
+                self._logger.error(
+                    "Failed to connect to WebSocket",
+                    extra={"context": context}
+                )
+                return False
+
+            self._is_listening = True
+
+            # Start listening task
+            self._listening_task = asyncio.create_task(
+                self._websocket_listener_loop()
+            )
+
+            self._logger.info(
+                "WebSocket listener started successfully",
+                extra={"context": {**context, "status": "success"}}
+            )
+            return True
+
+        except AuthenticationError as e:
+            self._logger.error(
+                f"Authentication failed while starting WebSocket listener: {str(e)}",
+                extra={"context": context}
+            )
+            self.clear_token()
+            return False
+
+        except NetworkError as e:
+            self._logger.error(
+                f"Network error while starting WebSocket listener: {str(e)}",
+                extra={"context": context}
+            )
+            return False
+
+        except Exception as e:
+            self._logger.error(
+                "Unexpected error while starting WebSocket listener",
+                extra={"context": context},
+                exc_info=True
+            )
+            return False
+
+    async def _websocket_listener_loop(self):
+        """Main WebSocket listener loop"""
+        context = {"operation": "websocket_listener_loop"}
+
+        self._logger.debug(
+            "WebSocket listener loop started",
+            extra={"context": context}
+        )
+
+        try:
+            await self._websocket_dao.listen_for_messages(self._handle_websocket_message)
+        except Exception as e:
+            if self._is_listening:  # Only log if we're supposed to be listening
+                self._logger.error(
+                    f"WebSocket listener loop error: {str(e)}",
+                    extra={"context": context},
+                    exc_info=True
+                )
+            # The loop will exit and we'll set _is_listening to False in stop_websocket_listener
+
+    async def _handle_websocket_message(self, message_str: str):
+        context = {"operation": "handle_websocket_message"}
+
+        try:
+            message_data = json.loads(message_str)
+            message_type = message_data.get("type")
+
+            context["message_type"] = message_type
+            self._logger.debug(
+                f"Received WebSocket message type: {message_type}",
+                extra={"context": context}
+            )
+
+            if message_type == "message" or ("message" in message_data and "sender_id" in message_data):
+                await self._process_incoming_message(message_data)
+            elif message_type == "user_status":
+                await self._handle_user_status(message_data)
+            elif message_type == "pong":
+                # Ignore pong messages
+                pass
+            else:
+                self._logger.warning(
+                    f"Unknown WebSocket message type: {message_type}",
+                    extra={"context": context}
+                )
+
+        except json.JSONDecodeError as e:
+            self._logger.error(
+                f"Invalid JSON in WebSocket message: {message_str[:100]}... {str(e)}",
+                extra={"context": context}
+            )
+        except Exception as e:
+            self._logger.error(
+                f"Error handling WebSocket message: {str(e)}",
+                extra={"context": context},
+                exc_info=True
+            )
+
+    async def _process_incoming_message(self, message_data: dict[str, Any]):
+        context = {
+            "operation": "process_incoming_message",
+            "message_id": message_data.get("id"),
+            "sender_id": message_data.get("sender_id")
+        }
+
+        self._logger.debug(
+            f"Processing incoming message {message_data.get('id')}",
+            extra={"context": context}
+        )
+
+        try:
+            decrypted_content = await self._encryption_service.decrypt_message(
+                encrypted_message=message_data["message"],
+                recipient_private_key=self._user_private_key,
+                sender_public_key=message_data["ephemeral_public_key"]
+            )
+
+            processed_message = {
+                **message_data,
+                "decrypted_content": decrypted_content,
+                "decryption_status": "success"
+            }
+
+            # Call user callback
+            if self._message_callback:
+                try:
+                    await self._message_callback(processed_message)
+                except Exception as e:
+                    self._logger.error(
+                        f"Error in user message callback: {str(e)}",
+                        extra={"context": context},
+                        exc_info=True
+                    )
+
+            # Acknowledge message delivery
+            await self._message_dao.ack_messages([message_data["id"]], token=self._current_token)
+
+            self._logger.debug(
+                f"Successfully processed message {message_data['id']}",
+                extra={"context": context}
+            )
+
+        except DecryptionError as e:
+            self._logger.error(
+                f"Decryption failed for message {message_data.get('id')}",
+                extra={"context": context},
+                exc_info=True
+            )
+
+            error_message = {
+                **message_data,
+                "decrypted_content": None,
+                "decryption_status": "failed",
+                "decryption_error": str(e)
+            }
+
+            if self._message_callback:
+                try:
+                    await self._message_callback(error_message)
+                except Exception as callback_error:
+                    self._logger.error(
+                        f"Error in user error callback: {str(callback_error)}",
+                        extra={"context": context},
+                        exc_info=True
+                    )
+
+        except Exception as e:
+            self._logger.error(
+                f"Unexpected error processing message {message_data.get('id')}. {str(e)}",
+                extra={"context": context},
+                exc_info=True
+            )
+
+    async def _handle_user_status(self, status_data: dict[str, Any]):
+        context = {
+            "operation": "handle_user_status",
+            "user_id": status_data.get("user_id"),
+            "online": status_data.get("online")
+        }
+
+        self._logger.debug(
+            f"Processing user status update: user {status_data['user_id']} - {status_data['online']}",
+            extra={"context": context}
+        )
+
+        if self._message_callback:
             try:
-                response = await self._message_dao.poll_messages()
-
-                if response.get("has_messages") and response.get("messages"):
-                    encrypted_messages = response["messages"]
-                    message_ids = []
-
-                    for message in encrypted_messages:
-                        try:
-                            # Decrypt the message
-                            decrypted_content = await self._encryption_service.decrypt_message(
-                                encrypted_message=message["message"],
-                                recipient_private_key=user_private_key,
-                                sender_public_key=message["ephemeral_public_key"]
-                            )
-
-                            # Collecting the result
-                            decrypted_message = {
-                                **message,
-                                "decrypted_content": decrypted_content,
-                                "decryption_status": "success"
-                            }
-
-                            message_ids.append(message["id"])
-                            await message_callback(decrypted_message)
-
-                        except Exception as e:
-                            self._logger.error(f"Failed to process message {message.get('id')}: {e}")
-                            # Send an error message to the callback
-                            error_message = {
-                                **message,
-                                "decrypted_content": None,
-                                "decryption_status": "failed",
-                                "decryption_error": str(e)
-                            }
-                            message_ids.append(message["id"])
-                            await message_callback(error_message)
-
-                    # Confirm all processed messages
-                    if message_ids:
-                        await self._message_dao.ack_messages(message_ids)
-
-            except asyncio.CancelledError:
-                break
+                status_message = {
+                    "type": "user_status",
+                    "user_id": status_data["user_id"],
+                    "online": status_data["online"],
+                    "timestamp": status_data.get("timestamp")
+                }
+                await self._message_callback(status_message)
             except Exception as e:
-                self._logger.error(f"Polling error: {e}")
-                await asyncio.sleep(1)
+                self._logger.error(
+                    f"Error in user status callback: {str(e)}",
+                    extra={"context": context},
+                    exc_info=True
+                )
 
-    async def stop_message_polling(self):
-        """
-        Stop message polling
-        :return:
-        """
-        if not self._is_polling:
+    async def stop_websocket_listener(self):
+        context = {"operation": "stop_websocket_listener"}
+
+        if not self._is_listening:
+            self._logger.debug(
+                "WebSocket listener already stopped",
+                extra={"context": context}
+            )
             return
 
-        self._is_polling = False
+        self._logger.info(
+            "Stopping WebSocket listener",
+            extra={"context": context}
+        )
 
-        if self._polling_task and not self._polling_task.done():
-            self._polling_task.cancel()
+        self._is_listening = False
+
+        # Cancel listening task
+        if self._listening_task and not self._listening_task.done():
+            self._listening_task.cancel()
             try:
-                await self._polling_task
+                await self._listening_task
             except asyncio.CancelledError:
                 pass
+            self._listening_task = None
 
-        self._logger.info("Message polling stopped")
+        # Disconnect WebSocket
+        await self._websocket_dao.disconnect()
 
-    def get_polling_status(self) -> dict[str, Any]:
-        """
-        Get polling status
-        :return: Polling status
-        """
-        return {
-            "is_polling": self._is_polling,
-            "task_running": self._polling_task is not None and not self._polling_task.done()
+        # Clear state
+        self._message_callback = None
+
+        self._logger.info(
+            "WebSocket listener stopped successfully",
+            extra={"context": {**context, "status": "success"}}
+        )
+
+    def get_connection_status(self) -> dict[str, Any]:
+        status = {
+            "is_connected": self._websocket_dao.is_connected,
+            "is_listening": self._is_listening,
+            "has_token": self._current_token is not None,
+            "has_callback": self._message_callback is not None,
+            "timestamp": datetime.utcnow().isoformat()
         }
+
+        self._logger.debug(
+            "Connection status retrieved",
+            extra={"context": {"operation": "get_connection_status", "status": status}}
+        )
+
+        return status
+
+    async def health_check(self) -> bool:
+        """Check if message service is healthy"""
+        context = {"operation": "health_check"}
+
+        try:
+            # Check if we can access message API
+            health_ok = await self._message_dao.health_check()
+
+            self._logger.debug(
+                f"Message service health check: {health_ok}",
+                extra={"context": context}
+            )
+            return health_ok
+
+        except Exception as e:
+            self._logger.error(
+                f"Message service health check failed: {str(e)}",
+                extra={"context": context},
+                exc_info=True
+            )
+            return False

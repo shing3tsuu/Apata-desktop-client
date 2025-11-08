@@ -367,8 +367,6 @@ async def loading_interface(page, change_screen, app_state, container, **kwargs)
             page.update()
 
             try:
-                if not await loading_manager.setup_services():
-                    raise Exception("Service initialization failed")
                 # Executing a method
                 success, message = await step_method(**step_params)
 

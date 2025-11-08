@@ -1,9 +1,9 @@
 from typing import Any
 import logging
 import traceback
+from datetime import datetime
 
 class BaseAppError(Exception):
-    """Base exception class with structured logging"""
     def __init__(self, message: str, context: dict[str, Any] | None = None):
         self.message = message
         self.context = context or {}
@@ -81,6 +81,9 @@ class ValidationError(BaseAppError):
 class CryptographyError(InfrastructureError):
     pass
 
+class InvalidKeyError(CryptographyError):
+    pass
+
 class KeyGenerationError(CryptographyError):
     pass
 
@@ -97,9 +100,7 @@ class MessageDeliveryError(InfrastructureError):
     pass
 
 class RetryableError(InfrastructureError):
-    """Marks errors that can be retried"""
     pass
 
 class NonRetryableError(BaseAppError):
-    """Marks errors that should not be retried"""
     pass

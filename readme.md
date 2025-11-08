@@ -1,199 +1,142 @@
 APATA - Encrypted Messenger
 
-A secure, end-to-end encrypted messaging application built with Python and Flet, featuring military-grade encryption and a sleek terminal-style interface.
-
-🛡️ Features Security & Encryption
+A secure, end-to-end encrypted desktop messaging application built with Python and Flet, featuring military-grade encryption and a sleek terminal-style interface.
+🛡️ Core Features
+Security & Encryption
 
     End-to-End Encryption using AES-256-GCM for message content
+    Key Exchange via X25519 (ECDH) for perfect forward secrecy for every session
+    Digital Signatures using ECDSA (SECP384R1) for authentication (challenge-response)
+    Secure Key Storage with password-derived master key encryption (keyring, pbkdf2 (600000 itetations))
+    Bcrypt Password Hashing with timing attack protection (12 rounds)
 
-    Key Exchange via X25519 (ECDH) for perfect forward secrecy
-
-    Digital Signatures using ECDSA (SECP384R1) for authentication
-
-    Secure Key Storage with password-derived master key encryption
-
-    Bcrypt Password Hashing with timing attack protection
-
-Core Functionality
+Application Functionality
 
     Secure User Registration & Authentication
-
     Encrypted Message Exchange
-
-    Contact Management
-
-    Real-time Message Polling
-
+    Contact Management (add, search, accept, reject, pending requests)
+    Real-time Message Polling (long polling + postgresq listen/notify)
     Message Delivery Status
-
     Session Management
 
-Technical Features
+User Interface
 
-    Async/Await Architecture for high performance
-    
-    SQLite Database with SQLAlchemy ORM
-    
-    Dependency Injection with Dishka
-    
-    RESTful API Client with retry logic (httpx)
-    
-    Modular Service Layer architecture
-    
-    Encryption Settings
+    Terminal-style Interface (black, white, grey and cyan colors)
+    Multiple Screens: Login, Loading, Messenger, Contacts and others
+    Responsive Design with 960x720 window size
+    Real-time Status Updates
 
-    Key derivation iterations and algorithms can be configured in the respective service files. 🎯 Usage First Time Setup
+🏗️ Architecture & Technologies
+Architecture Pattern
 
-Launch the application
+    Clean Architecture with clear separation of concerns
+    Dependency Injection using Dishka framework
+    Async/Await throughout the application
 
-    Enter your desired username and password
+Technology Stack
 
-The system will automatically:
+    Frontend: Flet (Python UI framework)
+    HTTP Client: httpx with retry logic and timeout handling
+    Database: SQLite with SQLAlchemy Async ORM
+    Cryptography: cryptography.hazmat primitives (AES, ECDH, ECDSA, SHA-2, PBKDF2, bcrypt)
+    Dependency Management: Dishka IoC container
 
-    Generate encryption key pairs
+Encryption Layer
 
-    Register with the messaging server
-
-    Securely store your keys
-
-    Establish an encrypted session
-
-    Sending Messages
-    
-    Add contacts using their username
-    
-    Select a contact from your contact list
-    
-    Type your message and press send
-    
-    Messages are automatically encrypted before transmission
-
-Security Features
-
-    Automatic Key Rotation: Supports periodic key updates
-    
-    Forward Secrecy: Each session uses unique encryption keys
-    
-    Tamper Detection: Messages are authenticated and integrity-protected
-    
-    Secure Storage: Private keys are encrypted with your password
-
-🛠️ Development Architecture Overview
-
-    APATA follows a clean architecture pattern with clear separation of concerns:
-    
-    Presentation Layer: Flet-based UI components
-    
-    Application Layer: Business logic and use cases
-    
-    Domain Layer: Core entities and interfaces
-    
-    Infrastructure Layer: External concerns (API, database, encryption)
-    
-    Key Components Encryption Stack
-    
-    AESGCMCipher: AES-256-GCM for symmetric encryption
-    
-    X25519Cipher: Elliptic Curve Diffie-Hellman for key exchange
-    
-    SECP384R1Signature: ECDSA for digital signatures
-    
+    AESGCMCipher: AES-256-GCM symmetric encryption
+    X25519Cipher: Elliptic Curve Diffie-Hellman key exchange
+    SECP384R1Signature: ECDSA digital signatures
+    EncryptionService: Orchestrates message encryption/decryption
     KeyManager: Secure key derivation and management
 
-Data Persistence
+Service Layer
 
-    SQLAlchemy: Database ORM with async support
-    
-    Repository Pattern: Clean data access abstraction
-    
-    DTO Pattern: Data transfer objects for type safety
-    
-    API Communication
-    
-    CommonHTTPClient: Robust HTTP client with retry logic
-    
-    Service Layer: Business logic encapsulation
-    
-    Error Handling: Comprehensive exception hierarchy
+httpx layers:
 
-Adding New Features
+    AuthHTTPDAO/Service: Handles user registration and authentication
+    MessageHTTPDAO/Service: Manages encrypted message exchange
+    ContactHTTPDAO/Service: Handles contact management
+    EncryptionService: Coordinates cryptographic operations
 
-    New Message Types
+sqlalchemy layers:
 
-    Extend Message model in structures.py
+    LocalUserDAO/Service: Stores local user data (multi-user support available)
+    ContactDAO/Service: Local storage of users contacts
+    MessageDAO/Service: Local storage of all users messages in encrypted form (kek from password via aes)
+    'DTO': pydantic models for convenient work with the database, validation and serialization
 
-    Update encryption service handlers
+🚀 Getting Started
+Prerequisites
 
-    Add UI components in presentation layer
+    Python 3.8+
+    Dependencies: flet, httpx, sqlalchemy, pydantic, cryptography, dishka
 
-Additional Encryption
+Installation
 
-    Implement cipher interfaces
+    Clone the repository
+    Install dependencies: pip install -r requirements.txt
+    Run the application: python main.py
 
-    Register new services in dependency container
+First Time Setup
 
-    Update key management as needed
+    Launch the application
+    Enter username and password on login screen
+    System automatically generates encryption keys
+    Proceeds to contact management and messaging interface
 
-🔒 Security Model Cryptographic Protocols
+🔒 Security Model
+Cryptographic Protocols
 
     Key Exchange: X25519 ECDH
-    
     Symmetric Encryption: AES-256-GCM
-    
     Digital Signatures: ECDSA with SECP384R1
-    
-    Password Hashing: Bcrypt with configurable cost
-    
-    Key Management
-    
+    Password Hashing: Bcrypt
+
+Key Management
+
     Master key derived from user password via PBKDF2
-    
-    Encryption keys stored in system keyring
-    
+    Private keys stored encrypted in local database
     Session keys ephemeral for forward secrecy
-    
-    Threat Mitigation
-    
-    Timing Attacks: Constant-time password comparison
-    
-    Key Compromise: Support for key rotation
-    
-    Replay Attacks: Message timestamps and nonces
-    
-    MITM Attacks: Server-authenticated key exchange
 
-🤝 Contributing
+Threat Mitigation
 
-    We welcome contributions! Please see our Contributing Guidelines for details.
-    
-    Fork the repository
-    
-    Create a feature branch (git checkout -b feature/amazing-feature)
-    
-    Commit your changes (git commit -m 'Add amazing feature')
-    
-    Push to the branch (git push origin feature/amazing-feature)
+    Timing attack protection in password comparison
+    Support for key rotation
+    Message authentication and integrity protection
 
-    Open a Pull Requests
+📱 UI/UX Overview
+Screens Flow
 
-🚧 Roadmap
+    Login: Terminal-style authentication
+    Loading: System initialization with progress indicators
+    Messenger: Main chat interface with contact list
+    Contacts: Contact management and search
 
-    Group messaging support
-    
-    File transfer encryption
-    
-    Voice/video call encryption
-    
-    Multi-device synchronization
-    
-    Offline message support
-    
-    Advanced contact management
+Design Features
+
+    Retro terminal aesthetic with green/black color scheme
+    Real-time status indicators
+    Secure connection establishment visual feedback
+    Contact presence indicators (online/offline/last seen)
+
+🛠️ Development
+Adding Features
+
+    New Message Types: Extend Message model in structures.py
+    Additional Encryption: Implement cipher interfaces
+    UI Components: Add to presentation/pages directory
+
+Testing
+
+    Encryption tests for all cryptographic components
+    API integration tests
+    Database operation tests
 
 ⚠️ Disclaimer
 
-    This is a beta version for educational and development purposes. Always conduct security audits before production use. The developers are not responsible for any security breaches resulting from misuse or misconfiguration.
-
+This is a beta version for educational and development purposes. Always conduct security audits before production use. The developers are not responsible for any security breaches resulting from misuse or misconfiguration.
 🆘 Support
 
-    For security issues, please contact the security team directly. For technical support, open an issue in the repository.
+For security issues, please contact the security team directly. For technical support, open an issue in the repository.
+
+APATA ENCRYPTED SYSTEMS VER 0.1 BETA

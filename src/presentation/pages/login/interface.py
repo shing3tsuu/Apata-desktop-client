@@ -3,7 +3,7 @@ from random import randint
 import asyncio
 
 from .manager import AuthManager
-from src.presentation.pages import AppState, Container
+from src.presentation.pages import AppState
 
 # Style configuration
 COLOR_ACCENT = "#FFFFFF"
@@ -81,10 +81,6 @@ async def login_interface(page, change_screen, app_state, container, **kwargs):
         page.update()
 
         try:
-            # Configure services if necessary
-            if not await auth_manager.setup_services():
-                raise Exception("Service initialization failed")
-
             # Perform authentication
             success, message = await auth_manager.authenticate_user(username, password)
 

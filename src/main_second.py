@@ -1,3 +1,6 @@
+"""
+Only for testing with two different users at the same time
+"""
 import flet as ft
 import asyncio
 import logging
@@ -23,9 +26,9 @@ PAGES = {
 
 async def main(page: ft.Page):
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.ERROR,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        force=True
+        force=True,
     )
     # Initializing the application state
     container = make_async_container(

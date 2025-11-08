@@ -1,4 +1,4 @@
-from pydantic import BaseModel, constr
+from pydantic import BaseModel, constr, validator
 from datetime import datetime
 from typing import List
 
@@ -17,6 +17,7 @@ class ContactRequestDTO(BaseModel):
     username: str | None = None
     ecdh_public_key: str | None = None
     last_seen: datetime | None = None
+    online: bool | None = None
 
 class ContactDTO(ContactRequestDTO):
     id: int
@@ -25,9 +26,9 @@ class MessageRequestDTO(BaseModel):
     local_user_id: int
     server_message_id: int
     contact_id: int
-    content: bytes
+    content: str
+    content_type: str | None = None  # "text", "image", "video", "audio", "file"
     timestamp: datetime
-    type: str | None = None # "text", "image", "video", "audio", "file"
     is_outgoing: bool  # True - outgoing, False - incoming
     is_delivered: bool
 

@@ -25,7 +25,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
     page.title = "APATA - SECURE MESSENGER"
     page.bgcolor = COLOR_BG_DARK
 
-    # Initialize stub managers
+    # Initialize messenger manager
     messenger_manager = MessengerManager(app_state, container)
 
     # State variables
@@ -64,7 +64,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             ft.IconButton(
                 icon=ft.Icons.REFRESH,
                 icon_color=COLOR_ACCENT,
-                on_click=lambda _: load_contacts()
+                on_click=lambda _: asyncio.create_task(load_contacts())
             ),
             ft.IconButton(
                 icon=ft.Icons.SETTINGS,
@@ -128,13 +128,13 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
         min_lines=1,
         max_lines=3,
         expand=True,
-        on_submit=lambda e: page.run_task(send_message_handler)
+        on_submit=lambda e: asyncio.create_task(send_message_handler())
     )
 
     send_button = ft.IconButton(
         icon=ft.Icons.SEND,
         icon_color=COLOR_ACCENT,
-        on_click=lambda e: page.run_task(send_message_handler)
+        on_click=lambda e: asyncio.create_task(send_message_handler())
     )
 
     input_row = ft.Container(
@@ -221,11 +221,66 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
         expand=True
     )
 
-    # Event handlers
+    async def handle_manager_callback(event_data: dict):
+        event_type = event_data.get("type")
+
+        if event_type == "new_message":
+            await handle_incoming_message(event_data)
+        elif event_type == "user_status":
+            await handle_user_status(event_data)
+        elif event_type == "error":
+            await handle_error(event_data)
+
+        await update_connection_status()
+
+    async def handle_incoming_message(message_data: dict):
+        nonlocal selected_contact
+
+        contact_id = message_data.get("contact_id")
+        message_text = message_data.get("message")
+        timestamp = message_data.get("timestamp")
+
+        if selected_contact == contact_id:
+            message_bubble = create_message_bubble({
+                "id": len(chat_messages_column.controls) + 1,
+                "content": message_text,
+                "content_type": "text",
+                "is_outgoing": False,
+                "timestamp": format_timestamp(timestamp) if timestamp else "just now"
+            })
+            chat_messages_column.controls.append(message_bubble)
+            page.update()
+
+            await asyncio.sleep(0.1)
+            chat_messages_column.scroll_to(offset=-1, duration=300)
+        else:
+            print(f"New message from {contact_id}: {message_text}")
+
+    async def handle_user_status(status_data: dict):
+        user_id = status_data.get("user_id")
+        online = status_data.get("online")
+
+        for contact in contacts:
+            if contact.server_user_id == user_id:
+                contact.online = online
+                contact.last_seen = datetime.utcnow()
+                break
+
+        await load_contacts()
+
+        error_type = error_data.get("error_type")
+        error_message = error_data.get("message")
+
+        print(f"Error: {error_type} - {error_message}")
+
     async def load_contacts():
         nonlocal contacts
         contacts = await messenger_manager.get_contacts()
         contacts_column.controls.clear()
+
+        online_count = sum(1 for contact in contacts if contact.online)
+
+        contacts_container.content.controls[0].content.controls[2].value = f"{online_count} ONLINE"
 
         for contact in contacts:
             contact_card = create_contact_card(contact)
@@ -234,13 +289,8 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
         page.update()
 
     def create_contact_card(contact):
-        now = datetime.utcnow()
-        if contact.last_seen:
-            time_diff = now - contact.last_seen
-            if time_diff < timedelta(minutes=5):
-                status_color = COLOR_SUCCESS
-            else:
-                status_color = COLOR_SECONDARY
+        if contact.online is True:
+            status_color = COLOR_SUCCESS
         else:
             status_color = COLOR_SECONDARY
 
@@ -258,7 +308,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
                 ft.Column([
                     ft.Text(contact.username, color=COLOR_TEXT, size=14, font_family=FONT_FAMILY),
                     ft.Text(
-                        format_last_seen(contact.last_seen),
+                        format_last_seen(contact.last_seen, contact.online),
                         color=COLOR_SECONDARY,
                         size=10
                     ) if contact.last_seen else ft.Text("never", color=COLOR_SECONDARY, size=10)
@@ -268,13 +318,25 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             padding=15,
             blur=ft.Blur(10, 10, ft.BlurTileMode.REPEATED),
             border=ft.border.all(1.5, ft.Colors.with_opacity(0.3, COLOR_ACCENT)),
-            on_click=lambda e, cid=contact.server_user_id: page.run_task(select_contact, cid),
+            on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(select_contact(cid)),
             border_radius=15,
             data=contact.server_user_id
         )
 
-    def format_last_seen(last_seen):
+    def format_last_seen(last_seen, online):
+        if online:
+            return "online"
+
+        if not last_seen:
+            return "never"
+
         now = datetime.utcnow()
+        if isinstance(last_seen, str):
+            try:
+                last_seen = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+            except:
+                return "unknown"
+
         diff = now - last_seen
 
         if diff < timedelta(minutes=1):
@@ -298,7 +360,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             if control.data == contact_id:
                 control.bgcolor = COLOR_BG_HOVER
             else:
-                control.bgcolor = COLOR_BG_CARD
+                control.bgcolor = None  # Reset background
 
         # Load messages for selected contact
         await load_messages(contact_id)
@@ -308,7 +370,14 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
         if contact:
             chat_container.controls[0] = ft.Container(
                 content=ft.Row([
-                    ft.Text(contact.username, color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
+                    ft.Column([
+                        ft.Text(contact.username, color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
+                        ft.Text(
+                            "online" if contact.online else format_last_seen(contact.last_seen, contact.online),
+                            color=COLOR_SUCCESS if contact.online else COLOR_SECONDARY,
+                            size=10
+                        )
+                    ]),
                     ft.Container(expand=True),
                     ft.Text("ENCRYPTION: X25519-AES256GCM", color=COLOR_SUCCESS, size=10)
                 ]),
@@ -338,25 +407,15 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             print(f"Error loading messages: {e}")
 
     def create_message_bubble(message):
-        if hasattr(message, 'is_outgoing'):
-            message_data = {
-                "id": message.server_message_id or id(message),
-                "text": message.content.decode() if isinstance(message.content, bytes) else message.content,
-                "is_outgoing": message.is_outgoing,
-                "timestamp": format_timestamp(message.timestamp)
-            }
-        else:
-            message_data = message
-
-        alignment = ft.MainAxisAlignment.END if message_data["is_outgoing"] else ft.MainAxisAlignment.START
-        bg_color = ft.Colors.with_opacity(0.2, COLOR_SUCCESS) if message_data["is_outgoing"] else COLOR_BG_CARD
+        alignment = ft.MainAxisAlignment.END if message["is_outgoing"] else ft.MainAxisAlignment.START
+        bg_color = ft.Colors.with_opacity(0.2, COLOR_SUCCESS) if message["is_outgoing"] else COLOR_BG_CARD
 
         return ft.Container(
             content=ft.Row([
                 ft.Column([
                     ft.Container(
                         content=ft.Text(
-                            message_data["text"],
+                            message["content"],
                             color=COLOR_TEXT,
                             size=14,
                             font_family=FONT_FAMILY
@@ -366,7 +425,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
                         border_radius=15
                     ),
                     ft.Text(
-                        message_data["timestamp"],
+                        message["timestamp"],
                         color=COLOR_SECONDARY,
                         size=10
                     )
@@ -375,51 +434,48 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             padding=ft.padding.symmetric(vertical=5, horizontal=10)
         )
 
-    async def handle_incoming_message(message_data):
-        nonlocal selected_contact, chat_messages_column, page
+    def format_timestamp(timestamp):
+        if not timestamp:
+            return ""
 
-        if message_data.get("decryption_status") != "success":
-            return
+        if isinstance(timestamp, str):
+            return timestamp
 
-        # Check if the message is related to the selected contact
-        sender_id = message_data.get("sender_id")
-        if selected_contact == sender_id:
-            # Add a message to the UI
-            message_bubble = create_message_bubble({
-                "id": message_data["id"],
-                "text": message_data["decrypted_content"],
-                "is_outgoing": False,
-                "timestamp": "just now"
-            })
+        now = datetime.utcnow()
+        if isinstance(timestamp, datetime):
+            diff = now - timestamp
+            if diff.total_seconds() < 60:
+                return "just now"
+            elif diff.total_seconds() < 3600:
+                minutes = int(diff.total_seconds() / 60)
+                return f"{minutes} min ago"
+            else:
+                return timestamp.strftime("%H:%M")
 
-            chat_messages_column.controls.append(message_bubble)
-            page.update()
-
-            await asyncio.sleep(0.1)
-            chat_messages_column.scroll_to(offset=-1, duration=300)
-        else:
-            # Can show a notification or update your contact list
-            print(f"New message from {sender_id}: {message_data['decrypted_content']}")
+        return str(timestamp)
 
     async def initialize_manager():
-        if not await messenger_manager.setup_services():
-            raise Exception("Service initialization failed")
-        messenger_manager.add_message_callback(handle_incoming_message)
+        messenger_manager.set_message_callback(handle_manager_callback)
+
         await load_contacts()
-        await messenger_manager.start_polling()
+
+        success = await messenger_manager.start_ws()
+        if not success:
+            print("Failed to connect")
 
     async def send_message_handler():
         if not selected_contact or not message_input.value.strip():
             return
 
-        text = message_input.value.strip()
+        content = message_input.value.strip()
         message_input.value = ""
 
         # Immediately display the message in the UI
         temp_id = len(chat_messages_column.controls) + 1
         message_bubble = create_message_bubble({
             "id": temp_id,
-            "text": text,
+            "content": content,
+            "content_type": "text",
             "is_outgoing": True,
             "timestamp": "just now"
         })
@@ -431,11 +487,13 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
         chat_messages_column.scroll_to(offset=-1, duration=300)
 
         try:
-            success = await messenger_manager.send_message(selected_contact, text)
+            success = await messenger_manager.send_message(selected_contact, content, content_type="text")
             if not success:
+                # Show error message
                 error_bubble = create_message_bubble({
                     "id": temp_id + 1,
-                    "text": "Failed to send message",
+                    "content": "Failed to send message",
+                    "content_type": "text",
                     "is_outgoing": True,
                     "timestamp": "just now"
                 })
@@ -445,8 +503,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             print(f"Error sending message: {e}")
 
     async def logout():
-        # TODO: Implement proper logout logic
-        await messenger_manager.stop_polling()
+        await messenger_manager.stop_ws()
         await messenger_manager.logout()
         await change_screen("login")
 
@@ -454,5 +511,5 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
     page.clean()
     page.add(final_layout)
 
-    # Load initial data
+    # Load initial data and start WebSocket
     await initialize_manager()

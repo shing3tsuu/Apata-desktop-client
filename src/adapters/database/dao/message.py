@@ -22,51 +22,34 @@ class AbstractMessageDAO(ABC):
         raise NotImplementedError()
 
 class MessageDAO(AbstractMessageDAO):
-    __slots__ = ("_session", "_logger")
+    __slots__ = "_session"
 
-    def __init__ (self, session: AsyncSession, logger: logging.Logger | None = None):
+    def __init__ (self, session: AsyncSession):
         self._session = session
-        self._logger = logger or logging.getLogger(__name__)
 
     async def add_message(self, message: MessageRequestDTO) -> MessageDTO:
-        try:
-            stmt = (
-                insert(Message)
-                .values(**message.model_dump())
-                .returning(Message)
-            )
-            result = await self._session.scalar(stmt)
+        stmt = (
+            insert(Message)
+            .values(**message.model_dump(exclude_unset=True))
+            .returning(Message)
+        )
+        result = await self._session.scalar(stmt)
 
-            return MessageDTO.model_validate(result, from_attributes=True)
-
-        except SQLAlchemyError as e:
-            self._logger.error(f"Error adding message in database: {e}")
+        return MessageDTO.model_validate(result, from_attributes=True)
 
     async def get_messages(self, local_user_id: int, contact_id: int, limit: int | None = None) -> list[MessageDTO]:
-        try:
-            stmt = select(Message).where(
-                and_(
-                    Message.local_user_id == local_user_id,
-                    Message.contact_id == contact_id
-                )
+        stmt = select(Message).where(
+            and_(
+                Message.local_user_id == local_user_id,
+                Message.contact_id == contact_id
             )
-            if limit:
-                stmt = stmt.limit(limit)
-            result = await self._session.scalars(stmt)
-
-            return [MessageDTO.model_validate(message, from_attributes=True) for message in result]
-
-        except SQLAlchemyError as e:
-            self._logger.error(f"Error fetching messages in database: {e}")
-            return []
+        )
+        if limit:
+            stmt = stmt.limit(limit)
+        result = await self._session.scalars(stmt)
+        return [MessageDTO.model_validate(message, from_attributes=True) for message in result]
 
     async def delete_message(self, message_id: int) -> bool:
-        try:
-            stmt = delete(Message).where(Message.id == message_id)
-            result = await self._session.execute(stmt)
-
-            return result.rowcount > 0
-
-        except SQLAlchemyError as e:
-            self._logger.error(f"Error deleting message in database: {e}")
-            return False
+        stmt = delete(Message).where(Message.id == message_id)
+        result = await self._session.execute(stmt)
+        return result.rowcount > 0

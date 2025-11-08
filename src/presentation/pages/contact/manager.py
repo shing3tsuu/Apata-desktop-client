@@ -8,7 +8,7 @@ from src.exceptions import *
 from dishka import AsyncContainer
 
 from src.providers import AppProvider
-from src.presentation.pages import AppState, Contact, Message, Container
+from src.presentation.pages import AppState, Contact, Message
 
 from src.adapters.database.dto import (
     LocalUserRequestDTO, LocalUserDTO,
@@ -16,7 +16,12 @@ from src.adapters.database.dto import (
     MessageRequestDTO, MessageDTO
 )
 
-class ContactManager(Container):
+class ContactManager:
+    def __init__(self, app_state: AppState, container: AsyncContainer):
+        self._state = app_state
+        self._container = container
+        self._logger = logging.getLogger(__name__)
+
     async def find_contacts(self, username: str) -> list[Contact]:
         """
         Find contacts from server by username ilike

@@ -46,6 +46,7 @@ class Contact(Base):
     username: Mapped[str] = mapped_column(String(50))
     ecdh_public_key: Mapped[str] = mapped_column(Text)
     last_seen: Mapped[Optional[datetime]]
+    online: Mapped[bool] = mapped_column(default=False)
 
     user: Mapped["LocalUser"] = relationship(
         "LocalUser",
@@ -64,7 +65,7 @@ class Message(Base):
 
     __table_args__ = (
         Index('ix_messages_contact_timestamp', 'contact_id', 'timestamp'),
-        Index('ix_messages_server_message_id', 'server_message_id', unique=True),
+        #Index('ix_messages_server_message_id', 'server_message_id', unique=True),
         Index('ix_messages_is_outgoing', 'is_outgoing'),
         Index('ix_messages_is_delivered', 'is_delivered'),
         Index('ix_messages_timestamp', 'timestamp'),
@@ -74,9 +75,9 @@ class Message(Base):
     local_user_id: Mapped[int] = mapped_column(ForeignKey("local_users.id", ondelete="CASCADE"))
     server_message_id: Mapped[int]
     contact_id: Mapped[int] = mapped_column(ForeignKey("contacts.id", ondelete="CASCADE"))
-    content: Mapped[bytes] = mapped_column(LargeBinary)
+    content: Mapped[str]
+    content_type: Mapped[str] = mapped_column(String(20))
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    type: Mapped[str] = mapped_column(String(20))
     is_outgoing: Mapped[bool]
     is_delivered: Mapped[bool] = mapped_column(default=False)
 

@@ -6,7 +6,7 @@ from dishka import Provider, provide, Scope
 from dishka import AsyncContainer, FromDishka
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.adapters.api.dao import CommonHTTPClient, AuthHTTPDAO, ContactHTTPDAO, MessageHTTPDAO
+from src.adapters.api.dao import CommonHTTPClient, AuthHTTPDAO, ContactHTTPDAO, MessageHTTPDAO, WebSocketDAO
 from src.adapters.api.service import AuthHTTPService, ContactHTTPService, MessageHTTPService, EncryptionService
 
 from src.adapters.database.dao import (
@@ -22,7 +22,7 @@ from src.adapters.database.structures import Base
 from src.adapters.encryption.service import (
     AbstractAES256Cipher, AESGCMCipher,
     AbstractECDHCipher, X25519Cipher,
-    AbstractECDSASignature, SECP384R1Signature,
+    AbstractECDSASignature, SECP256R1Signature, SECP521R1Signature,
     AbstractPasswordHasher, BcryptPasswordHasher,
     KeyManager
 )
@@ -48,7 +48,8 @@ class AppProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     async def ecdsa_signer(self, logger: logging.Logger) -> AbstractECDSASignature:
-        return SECP384R1Signature(logger=logger)
+        # SECP521R1 is supported, but sha needs to be changed on the server.
+        return SECP256R1Signature(logger=logger)
 
     @provide(scope=Scope.REQUEST)
     async def password_hasher(self, logger: logging.Logger) -> AbstractPasswordHasher:
@@ -56,7 +57,7 @@ class AppProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     async def key_manager(self, logger: logging.Logger) -> KeyManager:
-        return KeyManager(iterations=600000, logger=logger)
+        return KeyManager(iterations=100000, logger=logger)
 
     @provide(scope=Scope.REQUEST)
     async def key_storage(self, key_manager: KeyManager, logger: logging.Logger) -> EncryptedKeyStorage:
@@ -88,6 +89,13 @@ class AppProvider(Provider):
     @provide(scope=Scope.REQUEST)
     async def message_http_dao(self, http_client: CommonHTTPClient) -> MessageHTTPDAO:
         return MessageHTTPDAO(http_client=http_client)
+
+    @provide(scope=Scope.APP)
+    async def websocket_dao(self, logger: logging.Logger) -> WebSocketDAO:
+        return WebSocketDAO(
+            base_ws_url="ws://127.0.0.1:8000/",
+            logger=logger
+        )
 
     @provide(scope=Scope.REQUEST)
     async def auth_http_service(
@@ -121,12 +129,14 @@ class AppProvider(Provider):
             message_dao: MessageHTTPDAO,
             auth_dao: AuthHTTPDAO,
             encryption_service: EncryptionService,
+            websocket_dao: WebSocketDAO,
             logger: logging.Logger
     ) -> MessageHTTPService:
         return MessageHTTPService(
             message_dao=message_dao,
             auth_dao=auth_dao,
             encryption_service=encryption_service,
+            websocket_dao=websocket_dao,
             logger=logger
         )
 
@@ -195,22 +205,26 @@ class AppProvider(Provider):
     async def local_user_service(
             self,
             local_user_dao: AbstractLocalUserDAO,
-            common_dao: AbstractCommonDAO
+            common_dao: AbstractCommonDAO,
+            logger: logging.Logger
     ) -> LocalUserService:
         return LocalUserService(
             local_user_dao=local_user_dao,
-            common_dao=common_dao
+            common_dao=common_dao,
+            logger=logger
         )
 
     @provide(scope=Scope.REQUEST)
     async def contact_service(
             self,
             contact_dao: AbstractContactDAO,
-            common_dao: AbstractCommonDAO
+            common_dao: AbstractCommonDAO,
+            logger: logging.Logger
     ) -> ContactService:
         return ContactService(
             contact_dao=contact_dao,
-            common_dao=common_dao
+            common_dao=common_dao,
+            logger=logger
         )
 
     @provide(scope=Scope.REQUEST)
@@ -218,8 +232,10 @@ class AppProvider(Provider):
             self,
             message_dao: AbstractMessageDAO,
             common_dao: AbstractCommonDAO,
+            logger: logging.Logger
     ) -> MessageService:
         return MessageService(
             message_dao=message_dao,
-            common_dao=common_dao
+            common_dao=common_dao,
+            logger=logger
         )
