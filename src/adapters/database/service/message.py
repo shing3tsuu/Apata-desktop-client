@@ -22,7 +22,7 @@ class MessageService:
             await self._common_dao.commit()
             return result
         except Exception as e:
-            self._logger.error(f"Error adding message: {e}")
+            self._logger.error(f"Error adding message in database: {e}")
             await self._common_dao.rollback()
             raise
 
@@ -34,7 +34,7 @@ class MessageService:
                 limit=limit
             )
         except Exception as e:
-            self._logger.error(f"Error fetching messages: {e}")
+            self._logger.error(f"Error fetching messages in database: {e}")
             return []
 
     async def delete_message(self, message_id: int) -> bool:
@@ -43,6 +43,6 @@ class MessageService:
             await self._common_dao.commit()
             return result
         except Exception as e:
-            self._logger.error(f"Error deleting message: {e}")
+            self._logger.error(f"Error deleting message in database: {e}")
             await self._common_dao.rollback()
             return False

@@ -33,8 +33,7 @@ class ContactHTTPService:
     async def search_users(self, username: str) -> list[dict[str, Any]]:
         return await self._contact_dao.search_users(username=username, token=self._current_token)
 
-    async def contact_data_synchronization(self, users_ids: list[int]) -> list[
-        dict[str, Any]]:
+    async def contact_data_synchronization(self, users_ids: list[int]) -> list[dict[str, Any]]:
         try:
             if not users_ids:
                 return []
@@ -98,13 +97,29 @@ class ContactHTTPService:
             return []
 
     async def send_contact_request(self, receiver_id: int) -> dict[str, Any]:
-        return await self._contact_dao.send_contact_request(receiver_id, self._current_token)
+        try:
+            return await self._contact_dao.send_contact_request(receiver_id, self._current_token)
+        except Exception as e:
+            self._logger.error(f"Error sending contact request: {e}")
+            return {}
 
-    async def get_pending_requests(self, user_id: int) -> list[dict[str, Any]]:
-        return await self._contact_dao.get_contact_requests(user_id, self._current_token)
+    async def get_pending_contact_requests(self, user_id: int) -> list[dict[str, Any]]:
+        try:
+            return await self._contact_dao.get_contact_requests(user_id, self._current_token)
+        except Exception as e:
+            self._logger.error(f"Error getting pending requests: {e}")
+            return []
 
-    async def accept_request(self, receiver_id: int) -> dict[str, Any]:
-        return await self._contact_dao.accept_contact_request(receiver_id, self._current_token)
+    async def accept_contact_request(self, receiver_id: int) -> dict[str, Any]:
+        try:
+            return await self._contact_dao.accept_contact_request(receiver_id, self._current_token)
+        except Exception as e:
+            self._logger.error(f"Error accepting contact request: {e}")
+            return {}
 
-    async def reject_request(self, receiver_id: int) -> dict[str, Any]:
-        return await self._contact_dao.reject_contact_request(receiver_id, self._current_token)
+    async def reject_contact_request(self, receiver_id: int) -> dict[str, Any]:
+        try:
+            return await self._contact_dao.reject_contact_request(receiver_id, self._current_token)
+        except Exception as e:
+            self._logger.error(f"Error rejecting contact request: {e}")
+            return {}

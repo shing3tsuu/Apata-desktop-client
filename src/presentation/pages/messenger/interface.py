@@ -459,9 +459,10 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
 
         await load_contacts()
 
-        success = await messenger_manager.start_ws()
-        if not success:
-            print("Failed to connect")
+        if not app_state.is_ws_connected:
+            success = await messenger_manager.start_ws()
+            if not success:
+                print("Failed to connect")
 
     async def send_message_handler():
         if not selected_contact or not message_input.value.strip():

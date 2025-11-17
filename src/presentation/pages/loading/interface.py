@@ -220,10 +220,6 @@ async def loading_interface(page, change_screen, app_state, container, **kwargs)
     page.add(main_column)
 
     async def animate_connection():
-        """
-        Animation of connection lines
-        :return:
-        """
         while True:
             connection_lines.content.controls[0].opacity = 0.3
             page.update()
@@ -233,10 +229,6 @@ async def loading_interface(page, change_screen, app_state, container, **kwargs)
             await asyncio.sleep(0.8)
 
     async def animate_status_indicator():
-        """
-        Status indicator animation
-        :return:
-        """
         colors = [COLOR_WARNING, COLOR_SUCCESS, COLOR_TEXT]
         color_index = 0
         while True:
@@ -247,12 +239,6 @@ async def loading_interface(page, change_screen, app_state, container, **kwargs)
             await asyncio.sleep(1.5)
 
     async def add_step_status(step: str, status: str = "executing"):
-        """
-        Adding a step status with animation
-        :param step:
-        :param status:
-        :return:
-        """
         await asyncio.sleep(uniform(0.1, 0.3))
 
         if status == "executing":
@@ -296,11 +282,6 @@ async def loading_interface(page, change_screen, app_state, container, **kwargs)
         page.update()
 
     async def show_error(message: str):
-        """
-        Show error message
-        :param message:
-        :return:
-        """
         error_message_text.value = message
         error_container.visible = True
 
@@ -314,26 +295,14 @@ async def loading_interface(page, change_screen, app_state, container, **kwargs)
         page.update()
 
     async def hide_error():
-        """
-        Hide error message
-        :return:
-        """
         error_container.visible = False
         page.update()
 
     async def retry_initialization():
-        """
-        Retry initialization on error
-        :return:
-        """
         await hide_error()
         await simulate_loading_process()
 
     async def simulate_loading_process():
-        """
-        System boot process
-        :return:
-        """
         nonlocal current_step
 
         # Reset state
@@ -347,7 +316,7 @@ async def loading_interface(page, change_screen, app_state, container, **kwargs)
         for i in range(0, 10, 1):
             progress_percentage.value = f"{i}%"
             progress_bar_fill.width = (i / 100) * 400
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.02)
             page.update()
 
         # Sequential execution of real steps

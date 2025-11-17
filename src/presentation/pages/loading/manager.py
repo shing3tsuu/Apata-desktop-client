@@ -57,6 +57,16 @@ class LoadingManager:
                 local_contact_map = {contact.server_user_id: contact for contact in local_contacts}
                 # Process each server contact
                 for server_contact in server_contacts:
+                    self._state.update_contacts(
+                        Contact(
+                            server_user_id=server_contact.server_user_id,
+                            username=server_contact.username,
+                            ecdh_public_key=server_contact.ecdh_public_key,
+                            last_seen=server_contact.last_seen,
+                            online=server_contact.online,
+                            status=server_contact.status
+                        )
+                    )
                     local_contact = local_contact_map.get(server_contact.server_user_id)
                     if local_contact:
                         # Update existing contact

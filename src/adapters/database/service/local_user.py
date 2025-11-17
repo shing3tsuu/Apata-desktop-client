@@ -22,7 +22,7 @@ class LocalUserService:
             await self._common_dao.commit()
             return result
         except Exception as e:
-            self._logger.error(f"Error adding local user: {e}")
+            self._logger.error(f"Error adding local user in database: {e}")
             await self._common_dao.rollback()
             raise
 
@@ -30,7 +30,7 @@ class LocalUserService:
         try:
             return await self._local_user_dao.get_user_data(user)
         except Exception as e:
-            self._logger.error(f"Error getting local user data: {e}")
+            self._logger.error(f"Error getting local user data in database: {e}")
             return None
 
     async def update_user_data(self, user: LocalUserRequestDTO) -> LocalUserDTO | None:
@@ -39,7 +39,7 @@ class LocalUserService:
             await self._common_dao.commit()
             return result
         except Exception as e:
-            self._logger.error(f"Error updating local user data: {e}")
+            self._logger.error(f"Error updating local user data in database: {e}")
             await self._common_dao.rollback()
             return None
 
@@ -49,6 +49,6 @@ class LocalUserService:
             await self._common_dao.commit()
             return result
         except Exception as e:
-            self._logger.error(f"Error deleting local user: {e}")
+            self._logger.error(f"Error deleting local user in database: {e}")
             await self._common_dao.rollback()
             return False

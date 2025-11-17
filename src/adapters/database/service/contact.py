@@ -22,7 +22,7 @@ class ContactService:
             await self._common_dao.commit()
             return result
         except Exception as e:
-            self._logger.error(f"Error adding contact: {e}")
+            self._logger.error(f"Error adding contact in database: {e}")
             await self._common_dao.rollback()
             raise
 
@@ -44,14 +44,14 @@ class ContactService:
                     username=username
                 )
         except Exception as e:
-            self._logger.error(f"Error getting contact: {e}")
+            self._logger.error(f"Error getting contact in database: {e}")
             return None
 
     async def get_contacts(self, local_user_id: int) -> list[ContactDTO]:
         try:
             return await self._contact_dao.get_contacts(local_user_id)
         except Exception as e:
-            self._logger.error(f"Error getting contacts: {e}")
+            self._logger.error(f"Error getting contacts in database: {e}")
             return []
 
     async def update_contact(self, contact: ContactRequestDTO) -> ContactDTO | None:
@@ -60,7 +60,7 @@ class ContactService:
             await self._common_dao.commit()
             return result
         except Exception as e:
-            self._logger.error(f"Error updating contact: {e}")
+            self._logger.error(f"Error updating contact in database: {e}")
             await self._common_dao.rollback()
             return None
 

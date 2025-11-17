@@ -85,6 +85,8 @@ class MessageHTTPService:
         )
 
         try:
+            keys = await self._auth_dao.get_public_keys(recipient_id, self._current_token)
+            recipient_public_key = keys["ecdh_public_key"]
             # Encrypt the message
             encrypted_message = await self._encryption_service.encrypt_message(
                 message=message,

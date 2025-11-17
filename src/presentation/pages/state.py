@@ -37,6 +37,12 @@ class AppState:
     token: str | None = None
     is_authenticated: bool = False
 
+    is_ws_connected: bool = False
+
+    accepted_contacts = []
+    pending_contacts = []
+    rejected_contacts = []
+
     def update_from_login(
             self,
             username: str,
@@ -60,6 +66,48 @@ class AppState:
         self.token = token
         self.is_authenticated = True
 
+    def update_ws_status(self, status: bool):
+        if status:
+            self.is_ws_connected = True
+        else:
+            self.is_ws_connected = False
+
+    def update_contacts(self, contact: Contact):
+        if contact.status == "accepted":
+            self.accepted_contacts.append(contact)
+        elif contact.status == "pending":
+            self.pending_contacts.append(contact)
+        elif contact.status == "rejected":
+            self.rejected_contacts.append(contact)
+        else:
+            raise ValueError(f"Invalid contact status: {contact.status}")
+
+    def clear_contacts(self):
+        self.accepted_contacts = []
+        self.pending_contacts = []
+        self.rejected_contacts = []
+
+    def move_to_blacklist(self, contact: Contact):
+        if contact in self.contacts_cache:
+            self.contacts_cache.remove(contact)
+        if contact in self.pending_requests_cache:
+            self.pending_requests_cache.remove(contact)
+        if contact not in self.blacklist_cache:
+            contact.status = "rejected"
+            self.blacklist_cache.append(contact)
+
+    def restore_from_blacklist(self, contact: Contact):
+        if contact in self.blacklist_cache:
+            self.blacklist_cache.remove(contact)
+            contact.status = "accepted"
+            self.contacts_cache.append(contact)
+
+    def accept_pending_request(self, contact: Contact):
+        if contact in self.pending_requests_cache:
+            self.pending_requests_cache.remove(contact)
+            contact.status = "accepted"
+            self.contacts_cache.append(contact)
+
     def update_ecdh_public(self, ecdh_public_key: str):
         self.ecdh_public_key = ecdh_public_key
 
@@ -77,6 +125,12 @@ class AppState:
         self.ecdh_public_key = None
         self.ecdh_private_key = None
         self.is_authenticated = False
+
+        self.is_ws_started = False
+
+        self.accepted_contacts = []
+        self.pending_contacts = []
+        self.rejected_contacts = []
 
     def get_session_info(self) -> dict[str, Any]:
         return {

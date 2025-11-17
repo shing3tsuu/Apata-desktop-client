@@ -145,6 +145,15 @@ class MessengerManager:
         try:
             message_type = message_data.get("type")
 
+            context = {
+                "message_id": message_data.get("id"),
+                "sender_id": message_data.get("sender_id"),
+                "decryption_status": message_data.get("decryption_status")
+            }
+
+            self._logger.info(f"Processing WebSocket message: {context}")
+            self._logger.debug(f"Full message data: {message_data}")
+
             if message_type == "message":
                 await self._handle_websocket_message(message_data)
             elif message_type == "user_status":
@@ -199,9 +208,11 @@ class MessengerManager:
 
                 ephemeral_public_key = message_data.get("ephemeral_public_key")
                 await contact_service.update_contact(
-                    local_user_id=self._state.local_user_id,
-                    server_user_id=sender_id,
-                    ecdh_public_key=ephemeral_public_key
+                    contact=ContactRequestDTO(
+                        local_user_id=self._state.local_user_id,
+                        server_user_id=sender_id,
+                        ecdh_public_key=ephemeral_public_key
+                    )
                 )
 
                 if self._message_callback:
@@ -272,6 +283,7 @@ class MessengerManager:
                     message_callback=self._handle_incoming_message
                 )
                 self._ws_started = True
+                self._state.update_ws_status(True)
                 return True
 
         except Exception as e:
@@ -287,6 +299,7 @@ class MessengerManager:
                 await message_http_service.stop_websocket_listener()
 
                 self._ws_started = False
+                self._state.update_ws_status(False)
 
         except Exception as e:
             self.logger.error(f"Failed to stop message ws: {e}")

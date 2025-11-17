@@ -27,7 +27,10 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
 
     # State variables
     search_results = []
-    pending_requests = []
+
+    async def _change_screen(screen):
+        asyncio.create_task(contact_manager.synchronize_contacts())
+        await screen("messenger")
 
     # UI Elements
     background = ft.Container(
@@ -47,7 +50,7 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
             ft.IconButton(
                 icon=ft.Icons.ARROW_BACK,
                 icon_color=COLOR_ACCENT,
-                on_click=lambda _: asyncio.create_task(change_screen("messenger"))
+                on_click=lambda _: asyncio.create_task(_change_screen(change_screen))
             ),
             ft.Text(
                 "CONTACTS MANAGEMENT",
@@ -99,7 +102,6 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
 
     # Search results
     search_results_column = ft.Column([], scroll=ft.ScrollMode.ADAPTIVE)
-
     search_results_container = ft.Container(
         content=search_results_column,
         margin=10,
@@ -131,7 +133,6 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
 
     # Existing contacts
     contacts_column = ft.Column([], scroll=ft.ScrollMode.ADAPTIVE)
-
     contacts_container = ft.Container(
         content=contacts_column,
         margin=10,
@@ -144,12 +145,12 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
                 content=ft.Row([
                     ft.Text("MY CONTACTS", color=COLOR_SECONDARY, size=12),
                     ft.Container(expand=True),
-                    ft.Text(f"{len(app_state.contacts_cache)} TOTAL", color=COLOR_SUCCESS, size=10)
+                    ft.Text(f"{len(app_state.accepted_contacts)} TOTAL", color=COLOR_SUCCESS, size=10)
                 ]),
                 padding=ft.padding.symmetric(horizontal=15, vertical=10)
             ),
             ft.Divider(color=ft.Colors.with_opacity(0.2, COLOR_ACCENT), height=1),
-            contacts_container  # Заменен contacts_column на contacts_container
+            contacts_container
         ]),
         blur=ft.Blur(3, 3, ft.BlurTileMode.REPEATED),
         border_radius=15,
@@ -159,11 +160,10 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
 
     # Pending requests
     pending_column = ft.Column([], scroll=ft.ScrollMode.ADAPTIVE)
-
     pending_container = ft.Container(
         content=pending_column,
         margin=10,
-        expand=True  # Добавлено для растягивания
+        expand=True
     )
 
     pending_section = ft.Container(
@@ -186,6 +186,34 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
         expand=True
     )
 
+    # Blacklist section
+    blacklist_column = ft.Column([], scroll=ft.ScrollMode.ADAPTIVE)
+    blacklist_container = ft.Container(
+        content=blacklist_column,
+        margin=10,
+        expand=True
+    )
+
+    blacklist_section = ft.Container(
+        content=ft.Column([
+            ft.Container(
+                content=ft.Row([
+                    ft.Text("BLACKLIST", color=COLOR_SECONDARY, size=12),
+                    ft.Container(expand=True),
+                    ft.Icon(ft.Icons.BLOCK, size=16, color=COLOR_ERROR)
+                ]),
+                padding=ft.padding.symmetric(horizontal=15, vertical=10)
+            ),
+            ft.Divider(color=ft.Colors.with_opacity(0.2, COLOR_ACCENT), height=1),
+            blacklist_container
+        ]),
+        blur=ft.Blur(3, 3, ft.BlurTileMode.REPEATED),
+        border_radius=15,
+        margin=10,
+        visible=False,
+        expand=True
+    )
+
     # Main content area with tabs
     content_area = ft.Container(
         content=ft.Column([
@@ -193,10 +221,7 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
                 content=ft.Row([
                     ft.TextButton(
                         "MY CONTACTS",
-                        style=ft.ButtonStyle(
-                            color=COLOR_ACCENT,
-                            bgcolor=COLOR_BG_CARD if len(app_state.contacts_cache) > 0 else ft.Colors.TRANSPARENT
-                        ),
+                        style=ft.ButtonStyle(color=COLOR_ACCENT),
                         on_click=lambda e: show_contacts_section()
                     ),
                     ft.TextButton(
@@ -209,6 +234,11 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
                         style=ft.ButtonStyle(color=COLOR_ACCENT),
                         on_click=lambda e: show_pending_section()
                     ),
+                    ft.TextButton(
+                        "BLACKLIST",
+                        style=ft.ButtonStyle(color=COLOR_ACCENT),
+                        on_click=lambda e: show_blacklist_section()
+                    ),
                 ]),
                 padding=10
             ),
@@ -217,7 +247,8 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
                 content=ft.Stack([
                     contacts_section,
                     search_section,
-                    pending_section
+                    pending_section,
+                    blacklist_section
                 ]),
                 expand=True
             )
@@ -230,7 +261,7 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
         content=ft.Row([
             ft.Text("APATA CONTACTS TERMINAL", color=ft.Colors.with_opacity(0.5, COLOR_ACCENT), size=10),
             ft.Container(width=20),
-            ft.Text("SECURE CONTACT MANAGEMENT", color=COLOR_SUCCESS, size=12),
+            ft.Text("CONTACT MANAGEMENT", color=COLOR_SUCCESS, size=12),
             ft.Container(expand=True),
             ft.Text(f"USER: {app_state.username}", color=COLOR_ACCENT, size=10)
         ]),
@@ -258,16 +289,16 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
     )
 
     # Contact card creation
-    def create_contact_card(contact, show_actions=True, is_pending=False):
+    def create_contact_card(contact, section="contacts"):
         status_color = COLOR_SECONDARY
         status_text = "offline"
 
-        if hasattr(contact, 'status') and contact.status == "pending":
+        if contact.status == "pending":
             status_color = COLOR_WARNING
-            status_text = "pending"
-        elif hasattr(contact, 'status') and contact.status == "rejected":
+            status_text = "pending request"
+        elif contact.status == "rejected":
             status_color = COLOR_ERROR
-            status_text = "rejected"
+            status_text = "blocked"
         elif contact.last_seen:
             try:
                 if isinstance(contact.last_seen, str):
@@ -276,8 +307,7 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
                     last_seen_dt = contact.last_seen
 
                 if last_seen_dt:
-                    time_diff = datetime.utcnow() - last_seen_dt
-                    if time_diff <= timedelta(minutes=5):
+                    if contact.online:
                         status_color = COLOR_SUCCESS
                         status_text = "online"
                     else:
@@ -311,38 +341,64 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
             ])
         ]
 
-        # Add action buttons if needed
-        if show_actions:
-            if is_pending:
-                # For pending requests - accept/reject buttons
-                action_buttons = ft.Row([
-                    ft.IconButton(
-                        icon=ft.Icons.CHECK,
-                        icon_color=COLOR_SUCCESS,
-                        icon_size=20,
-                        tooltip="Accept request",
-                        on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(accept_request(cid))
-                    ),
-                    ft.IconButton(
-                        icon=ft.Icons.CLOSE,
-                        icon_color=COLOR_ERROR,
-                        icon_size=20,
-                        tooltip="Reject request",
-                        on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(reject_request(cid))
-                    )
-                ])
-            else:
-                # For search results - add contact button
-                action_buttons = ft.Row([
-                    ft.IconButton(
-                        icon=ft.Icons.ADD,
-                        icon_color=COLOR_SUCCESS,
-                        icon_size=20,
-                        tooltip="Send contact request",
-                        on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(send_contact_request(cid))
-                    )
-                ])
+        # Add action buttons based on section
+        if section == "search":
+            # For search results - add contact button
+            action_buttons = ft.Row([
+                ft.IconButton(
+                    icon=ft.Icons.ADD,
+                    icon_color=COLOR_SUCCESS,
+                    icon_size=20,
+                    tooltip="Send contact request",
+                    on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(send_contact_request(cid))
+                )
+            ])
+            card_content.append(action_buttons)
 
+        elif section == "pending":
+            # For pending requests - accept/reject buttons
+            action_buttons = ft.Row([
+                ft.IconButton(
+                    icon=ft.Icons.CHECK,
+                    icon_color=COLOR_SUCCESS,
+                    icon_size=20,
+                    tooltip="Accept request",
+                    on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(accept_request(cid))
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.CLOSE,
+                    icon_color=COLOR_ERROR,
+                    icon_size=20,
+                    tooltip="Reject request",
+                    on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(reject_request(cid))
+                )
+            ])
+            card_content.append(action_buttons)
+
+        elif section == "blacklist":
+            # For blacklist - restore button
+            action_buttons = ft.Row([
+                ft.IconButton(
+                    icon=ft.Icons.RESTORE,
+                    icon_color=COLOR_SUCCESS,
+                    icon_size=20,
+                    tooltip="Restore contact",
+                    on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(restore_contact(cid))
+                )
+            ])
+            card_content.append(action_buttons)
+
+        elif section == "contacts":
+            # For existing contacts - remove button
+            action_buttons = ft.Row([
+                ft.IconButton(
+                    icon=ft.Icons.BLOCK,
+                    icon_color=COLOR_ERROR,
+                    icon_size=20,
+                    tooltip="Block contact",
+                    on_click=lambda e, cid=contact.server_user_id: asyncio.create_task(remove_contact(cid))
+                )
+            ])
             card_content.append(action_buttons)
 
         return ft.Container(
@@ -350,13 +406,12 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
             padding=15,
             blur=ft.Blur(10, 10, ft.BlurTileMode.REPEATED),
             border=ft.border.all(1.5, ft.Colors.with_opacity(0.3, COLOR_ACCENT)),
-            on_click=lambda e, cid=contact.server_user_id: select_contact(cid) if not show_actions else None,
+            on_click=lambda e, cid=contact.server_user_id: select_contact(cid) if section == "contacts" else None,
             border_radius=15,
             data=contact.server_user_id
         )
 
     def parse_datetime(datetime_str):
-        from datetime import datetime
         formats = [
             "%Y-%m-%dT%H:%M:%S.%fZ",
             "%Y-%m-%dT%H:%M:%SZ",
@@ -375,7 +430,6 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
         return None
 
     def format_last_seen(last_seen):
-        """Форматирует datetime для отображения"""
         if not last_seen or not isinstance(last_seen, datetime):
             return "unknown"
 
@@ -399,19 +453,30 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
         contacts_section.visible = True
         search_section.visible = False
         pending_section.visible = False
+        blacklist_section.visible = False
         page.update()
 
     def show_search_section():
         contacts_section.visible = False
         search_section.visible = True
         pending_section.visible = False
+        blacklist_section.visible = False
         page.update()
 
     def show_pending_section():
         contacts_section.visible = False
         search_section.visible = False
         pending_section.visible = True
+        blacklist_section.visible = False
         asyncio.create_task(load_pending_requests())
+        page.update()
+
+    def show_blacklist_section():
+        contacts_section.visible = False
+        search_section.visible = False
+        pending_section.visible = False
+        blacklist_section.visible = True
+        asyncio.create_task(load_blacklist())
         page.update()
 
     # Event handlers
@@ -443,7 +508,7 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
                 )
             else:
                 for contact in results:
-                    contact_card = create_contact_card(contact, show_actions=True)
+                    contact_card = create_contact_card(contact, section="search")
                     search_results_column.controls.append(contact_card)
 
             page.update()
@@ -463,43 +528,116 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
         try:
             success = await contact_manager.send_request(contact_id)
             if success:
-                # Update UI to show success
+                show_snackbar("Contact request sent", COLOR_SUCCESS)
+                # Update UI
                 for card in search_results_column.controls:
                     if card.data == contact_id:
                         card.content.controls[1] = ft.Text("Request sent", color=COLOR_SUCCESS, size=12)
                         break
                 page.update()
             else:
-                # Show error
-                show_snackbar("Failed to send contact request")
+                show_snackbar("Failed to send contact request", COLOR_ERROR)
         except Exception as e:
-            show_snackbar(f"Error: {str(e)}")
+            show_snackbar(f"Error: {str(e)}", COLOR_ERROR)
 
     async def accept_request(contact_id):
-        # TODO: Implement accept logic in manager
-        show_snackbar(f"Contact request {contact_id} accepted")
-        await load_pending_requests()
+        try:
+            success = await contact_manager.accept_request(contact_id)
+            if success:
+                show_snackbar("Contact request accepted", COLOR_SUCCESS)
+                await reload_all_data()
+            else:
+                show_snackbar("Failed to accept contact request", COLOR_ERROR)
+        except Exception as e:
+            show_snackbar(f"Error: {str(e)}", COLOR_ERROR)
 
     async def reject_request(contact_id):
-        # TODO: Implement reject logic in manager
-        show_snackbar(f"Contact request {contact_id} rejected")
-        await load_pending_requests()
+        try:
+            success = await contact_manager.reject_request(contact_id)
+            if success:
+                show_snackbar("Contact request rejected", COLOR_SUCCESS)
+                await reload_all_data()
+            else:
+                show_snackbar("Failed to reject contact request", COLOR_ERROR)
+        except Exception as e:
+            show_snackbar(f"Error: {str(e)}", COLOR_ERROR)
+
+    async def remove_contact(contact_id):
+        try:
+            success = await contact_manager.remove_contact(contact_id)
+            if success:
+                show_snackbar("Contact moved to blacklist", COLOR_SUCCESS)
+                await reload_all_data()
+            else:
+                show_snackbar("Failed to remove contact", COLOR_ERROR)
+        except Exception as e:
+            show_snackbar(f"Error: {str(e)}", COLOR_ERROR)
+
+    async def restore_contact(contact_id):
+        try:
+            # This will use the accept_request logic to restore from blacklist
+            success = await contact_manager.accept_request(contact_id)
+            if success:
+                show_snackbar("Contact restored from blacklist", COLOR_SUCCESS)
+                await reload_all_data()
+            else:
+                show_snackbar("Failed to restore contact", COLOR_ERROR)
+        except Exception as e:
+            show_snackbar(f"Error: {str(e)}", COLOR_ERROR)
 
     async def load_pending_requests():
-        # TODO: Load actual pending requests from manager
-        # This is a placeholder - implement based on your data structure
         pending_column.controls.clear()
 
-        # Example placeholder - replace with actual data
-        if hasattr(app_state, 'pending_requests_cache'):
-            for request in app_state.pending_requests_cache:
-                contact_card = create_contact_card(request, show_actions=True, is_pending=True)
+        try:
+            pending_requests = await contact_manager.get_pending_requests()
+
+            for request in pending_requests:
+                app_state.update_contacts(request)
+                contact_card = create_contact_card(request, section="pending")
                 pending_column.controls.append(contact_card)
 
-        if not pending_column.controls:
+            if not pending_column.controls:
+                pending_column.controls.append(
+                    ft.Container(
+                        content=ft.Text("No pending requests", color=COLOR_SECONDARY),
+                        alignment=ft.Alignment(0, 0),
+                        padding=20
+                    )
+                )
+        except Exception as e:
             pending_column.controls.append(
                 ft.Container(
-                    content=ft.Text("No pending requests", color=COLOR_SECONDARY),
+                    content=ft.Text(f"Error loading pending requests: {str(e)}", color=COLOR_ERROR),
+                    alignment=ft.Alignment(0, 0),
+                    padding=20
+                )
+            )
+
+        page.update()
+
+    async def load_blacklist():
+        blacklist_column.controls.clear()
+
+        try:
+            blacklist = await contact_manager.get_blacklist()
+
+            for contact in blacklist:
+                app_state.update_contacts(contact)
+                contact_card = create_contact_card(contact, section="blacklist")
+                blacklist_column.controls.append(contact_card)
+
+            if not blacklist_column.controls:
+                blacklist_column.controls.append(
+                    ft.Container(
+                        content=ft.Text("Blacklist is empty", color=COLOR_SECONDARY),
+                        alignment=ft.Alignment(0, 0),
+                        padding=20
+                    )
+                )
+        except Exception as e:
+            blacklist_column.controls.append(
+                ft.Container(
+                    content=ft.Text(f"Error loading blacklist: {str(e)}", color=COLOR_ERROR),
                     alignment=ft.Alignment(0, 0),
                     padding=20
                 )
@@ -510,8 +648,8 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
     async def load_existing_contacts():
         contacts_column.controls.clear()
 
-        for contact in app_state.contacts_cache:
-            contact_card = create_contact_card(contact, show_actions=False)
+        for contact in app_state.accepted_contacts:
+            contact_card = create_contact_card(contact, section="contacts")
             contacts_column.controls.append(contact_card)
 
         if not contacts_column.controls:
@@ -528,9 +666,14 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
 
         page.update()
 
+    async def reload_all_data():
+        await load_existing_contacts()
+        await load_pending_requests()
+        await load_blacklist()
+
     def select_contact(contact_id):
         # Navigate to messenger with selected contact
-        change_screen("messenger", selected_contact=contact_id)
+        asyncio.create_task(change_screen("messenger", selected_contact=contact_id))
 
     def show_snackbar(message, color=COLOR_ACCENT):
         page.snack_bar = ft.SnackBar(
@@ -542,18 +685,12 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
         page.update()
 
     async def logout():
-        # TODO: Implement proper logout logic
         await change_screen("login")
-
-    async def initialize_manager():
-        if not await contact_manager.setup_services():
-            raise Exception("Contact service initialization failed")
-        await load_existing_contacts()
 
     # Initialize the interface
     page.clean()
     page.add(final_layout)
 
     # Load initial data
-    await initialize_manager()
+    await reload_all_data()
     show_contacts_section()  # Show contacts by default
