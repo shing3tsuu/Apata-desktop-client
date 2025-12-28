@@ -41,19 +41,21 @@ class LoadingManager:
             async with self._container() as request_container:
                 contact_http_service = await request_container.get(ContactHTTPService)
                 contact_http_service.set_token(self._state.token)
+                local_user_service = await request_container.get(LocalUserService)
                 contact_service = await request_container.get(ContactService)
 
                 self._logger.info("Starting contact synchronization...")
 
                 # Get all contacts from server with complete information
-                server_contacts = await contact_http_service.get_contacts(server_user_id=self._state.server_user_id)
-                if not server_contacts:
-                    self._logger.info("No contacts found on server")
-                    return True, "No contacts found on server"
-                # Get local contacts for comparison
-                local_contacts = await contact_service.get_contacts(
-                    local_user_id=self._state.local_user_id
+                server_contacts_task = contact_http_service.get_contacts(server_user_id=self._state.server_user_id)
+                local_contacts_task = contact_service.get_contacts(local_user_id=self._state.local_user_id)
+
+                server_contacts, local_contacts = await asyncio.gather(
+                    server_contacts_task,
+                    local_contacts_task,
+                    return_exceptions=True
                 )
+
                 local_contact_map = {contact.server_user_id: contact for contact in local_contacts}
                 # Process each server contact
                 for server_contact in server_contacts:
@@ -61,6 +63,7 @@ class LoadingManager:
                         Contact(
                             server_user_id=server_contact.server_user_id,
                             username=server_contact.username,
+                            ecdsa_public_key=server_contact.ecdsa_public_key,
                             ecdh_public_key=server_contact.ecdh_public_key,
                             last_seen=server_contact.last_seen,
                             online=server_contact.online,
@@ -75,6 +78,7 @@ class LoadingManager:
                                 local_user_id=self._state.local_user_id,
                                 server_user_id=server_contact.server_user_id,
                                 username=server_contact.username,
+                                ecdsa_public_key=server_contact.ecdsa_public_key,
                                 ecdh_public_key=server_contact.ecdh_public_key,
                                 status=server_contact.status,
                                 last_seen=server_contact.last_seen,
@@ -89,6 +93,7 @@ class LoadingManager:
                                 local_user_id=self._state.local_user_id,
                                 server_user_id=server_contact.server_user_id,
                                 username=server_contact.username,
+                                ecdsa_public_key=server_contact.ecdsa_public_key,
                                 ecdh_public_key=server_contact.ecdh_public_key,
                                 status=server_contact.status,
                                 last_seen=server_contact.last_seen,
@@ -112,24 +117,42 @@ class LoadingManager:
             self._logger.error(f"Contact synchronization failed: {error_msg}")
             return False, error_msg
 
-    async def sync_message_history(self) -> bool:
+    async def sync_message_history(self) -> tuple[bool, str]:
         try:
             async with self._container() as request_container:
                 message_http_service = await request_container.get(MessageHTTPService)
                 message_http_service.set_token(self._state.token)
+                contact_service = await request_container.get(ContactService)
                 message_service = await request_container.get(MessageService)
                 aes_cipher = await request_container.get(AbstractAES256Cipher)
 
+                # Получаем всех контактов и создаем словарь sender_id -> ecdsa_public_key
+                contacts = await contact_service.get_contacts(self._state.local_user_id)
+                ecdsa_dict = {}
+
+                for contact in contacts:
+                    if contact.ecdsa_public_key:  # Проверяем, что ключ есть
+                        ecdsa_dict[contact.server_user_id] = contact.ecdsa_public_key
+
+                self._logger.info(f"Loaded ECDSA keys for {len(ecdsa_dict)} contacts")
+
                 self._logger.info("Starting message synchronization...")
-                # Get undelivered messages
+
                 new_messages = await message_http_service.get_undelivered_messages(
-                    user_private_key=self._state.ecdh_private_key
+                    ecdsa_dict=ecdsa_dict,
+                    recipient_ecdh_private_key=self._state.ecdh_private_key
                 )
+
                 if not new_messages:
                     return True, "No new messages to synchronize"
-                # Adding new messages to local storage and state
+
+                self._logger.info(f"Received {len(new_messages)} new messages")
+
+                # Добавляем новые сообщения в локальное хранилище и состояние
                 for new_message in new_messages:
                     self._logger.info(f"Adding new message from: {new_message['sender_id']} to local storage...")
+
+                    # Шифруем контент для локального хранения
                     encrypted_message = await aes_cipher.encrypt(
                         new_message['decrypted_content'],
                         self._state.master_key
@@ -141,56 +164,51 @@ class LoadingManager:
                             server_message_id=new_message['id'],
                             contact_id=new_message['sender_id'],
                             content=encrypted_message,
-                            content_type=new_message['content_type'],
-                            timestamp=new_message['timestamp'],
-                            type=None,
+                            content_type=new_message.get('content_type'),
+                            timestamp=new_message.get('timestamp', datetime.utcnow()),
                             is_outgoing=False,
                             is_delivered=True
                         )
                     )
-                return True, "Messages synchronized successfully"
+
+                return True, f"Successfully synchronized {len(new_messages)} messages"
 
         except Exception as e:
-            error_msg = e
+            error_msg = str(e)
             self._logger.error(f"Get undelivered messages failed: {error_msg}")
             return False, error_msg
 
     async def rotate_keys(self) -> bool:
-        is_rotate = True
         try:
             async with self._container() as request_container:
                 auth_http_service = await request_container.get(AuthHTTPService)
                 auth_http_service.set_token(self._state.token)
                 key_storage = await request_container.get(EncryptedKeyStorage)
-                if is_rotate is False:
-                    keys = await auth_http_service.get_public_keys(self._state.server_user_id)
-                    self._state.update_ecdh_public(
-                        ecdh_public_key=keys['ecdh_public_key']
-                    )
-                    return True, "Keys not rotated"
-                else:
-                    self._logger.info("Rotating keys...")
 
-                    ecdh_private_key, ecdh_public_key = await auth_http_service.update_ecdh_key()
+                self._logger.info("Rotating keys...")
 
-                    if not ecdh_private_key:
-                        return False, "Failed to rotate keys"
+                ecdh_private_key, ecdh_public_key = await auth_http_service.update_ecdh_key()
 
-                    key_storage.clear_ecdh_private_key(self._state.username)
+                if not ecdh_private_key:
+                    return False, "Failed to rotate keys"
 
-                    if not await key_storage.store_ecdh_private_key(
-                            username=self._state.username,
-                            ecdh_private_key=ecdh_private_key,
-                            password=self._state.password,
-                    ):
-                        return False, "Failed to store ECDH private key"
+                key_storage.clear_ecdh_private_key(self._state.username)
 
-                    self._state.update_ecdh_keys(
-                        ecdh_public_key=ecdh_public_key,
-                        ecdh_private_key=ecdh_private_key,
-                    )
+                success = await key_storage.store_ecdh_private_key(
+                    username=self._state.username,
+                    ecdh_private_key=ecdh_private_key,
+                    password=self._state.password,
+                )
 
-                    return True, "Keys rotated successfully"
+                if not success:
+                    return False, "Failed to store ECDH private key"
+
+                self._state.update_ecdh_keys(
+                    ecdh_public_key=ecdh_public_key,
+                    ecdh_private_key=ecdh_private_key,
+                )
+
+                return True, "Keys rotated successfully"
         except Exception as e:
             error_msg = e
             self._logger.error(f"Key rotation failed: {error_msg}")

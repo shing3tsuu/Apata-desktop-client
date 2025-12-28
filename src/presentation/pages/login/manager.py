@@ -106,6 +106,7 @@ class AuthManager:
                 await local_user_service.add_user(
                     LocalUserRequestDTO(
                         server_user_id=data["id"],
+                        ecdsa_public_key=data["ecdsa_public_key"],
                         username=username,
                         hashed_password=hashed_password
                     )
@@ -126,6 +127,7 @@ class AuthManager:
                     server_user_id=data["id"],
                     password=password,
                     master_key=master_key,
+                    ecdsa_public_key=data["ecdsa_public_key"],
                     ecdsa_private_key=ecdsa_private_key,
                     ecdh_public_key=None,
                     ecdh_private_key=ecdh_private_key,
@@ -192,6 +194,7 @@ class AuthManager:
                     server_user_id=data["id"],
                     password=password,
                     master_key=master_key,
+                    ecdsa_public_key=data["ecdsa_public_key"],
                     ecdsa_private_key=ecdsa_private_key,
                     ecdh_public_key=None,
                     ecdh_private_key=ecdh_private_key,

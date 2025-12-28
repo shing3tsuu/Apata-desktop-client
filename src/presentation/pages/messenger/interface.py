@@ -20,7 +20,6 @@ COLOR_BG_CARD = "#1A1A1A"
 COLOR_BG_HOVER = "#2A2A2A"
 FONT_FAMILY = "RobotoSlab"
 
-
 async def messenger_interface(page, change_screen, app_state, container, **kwargs):
     page.title = "APATA - SECURE MESSENGER"
     page.bgcolor = COLOR_BG_DARK
@@ -31,6 +30,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
     # State variables
     selected_contact = None
     contacts = []
+    timezone = await messenger_manager.get_timezone()
 
     background = ft.Container(
         content=ft.Image(
@@ -69,7 +69,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             ft.IconButton(
                 icon=ft.Icons.SETTINGS,
                 icon_color=COLOR_ACCENT,
-                on_click=lambda _: print("Settings clicked")
+                on_click=lambda _: asyncio.create_task(change_screen("settings"))
             ),
             ft.IconButton(
                 icon=ft.Icons.LOGOUT,
@@ -231,8 +231,6 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
         elif event_type == "error":
             await handle_error(event_data)
 
-        await update_connection_status()
-
     async def handle_incoming_message(message_data: dict):
         nonlocal selected_contact
 
@@ -259,6 +257,9 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
     async def handle_user_status(status_data: dict):
         user_id = status_data.get("user_id")
         online = status_data.get("online")
+        timestamp = status_data.get("timestamp")
+
+        await update_contact_status(user_id, online, timestamp)
 
         for contact in contacts:
             if contact.server_user_id == user_id:
@@ -268,10 +269,66 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
 
         await load_contacts()
 
-        error_type = error_data.get("error_type")
-        error_message = error_data.get("message")
+    async def update_contact_status(user_id: int, online: bool, timestamp: str = None):
+        nonlocal contacts
 
-        print(f"Error: {error_type} - {error_message}")
+        contact_updated = False
+        for contact in contacts:
+            if contact.server_user_id == user_id:
+                contact.online = online
+                if timestamp:
+                    try:
+                        contact.last_seen = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    except:
+                        contact.last_seen = datetime.utcnow()
+                else:
+                    contact.last_seen = datetime.utcnow()
+                contact_updated = True
+                break
+
+        if not contact_updated:
+            await load_contacts()
+            return
+
+        for index, control in enumerate(contacts_column.controls):
+            if hasattr(control, 'data') and control.data == user_id:
+                updated_contact = next((c for c in contacts if c.server_user_id == user_id), None)
+                if updated_contact:
+                    new_contact_card = create_contact_card(updated_contact)
+                    contacts_column.controls[index] = new_contact_card
+
+                    if selected_contact == user_id:
+                        await update_chat_header(updated_contact)
+
+                    break
+
+        # Обновляем счетчик онлайн
+        online_count = sum(1 for contact in contacts if contact.online)
+        contacts_container.content.controls[0].content.controls[2].value = f"{online_count} ONLINE"
+
+        # Обновляем страницу
+        page.update()
+
+    async def update_chat_header(contact: Contact):
+        if not contact:
+            return
+
+        chat_container.controls[0] = ft.Container(
+            content=ft.Row([
+                ft.Column([
+                    ft.Text(contact.username, color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
+                    ft.Text(
+                        "online" if contact.online else format_last_seen(contact.last_seen, contact.online, timezone),
+                        color=COLOR_SUCCESS if contact.online else COLOR_SECONDARY,
+                        size=10
+                    )
+                ]),
+                ft.Container(expand=True),
+                ft.Text("ENCRYPTION: X25519-AES256GCM", color=COLOR_SUCCESS, size=10)
+            ]),
+            padding=15,
+            bgcolor=ft.Colors.with_opacity(0.05, COLOR_ACCENT)
+        )
 
     async def load_contacts():
         nonlocal contacts
@@ -308,7 +365,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
                 ft.Column([
                     ft.Text(contact.username, color=COLOR_TEXT, size=14, font_family=FONT_FAMILY),
                     ft.Text(
-                        format_last_seen(contact.last_seen, contact.online),
+                        format_last_seen(contact.last_seen, contact.online, timezone),
                         color=COLOR_SECONDARY,
                         size=10
                     ) if contact.last_seen else ft.Text("never", color=COLOR_SECONDARY, size=10)
@@ -323,21 +380,26 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             data=contact.server_user_id
         )
 
-    def format_last_seen(last_seen, online):
+    def format_last_seen(last_seen, online, timezone=0):
         if online:
             return "online"
 
         if not last_seen:
             return "never"
 
-        now = datetime.utcnow()
+        now_utc = datetime.utcnow()
+
         if isinstance(last_seen, str):
             try:
                 last_seen = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
             except:
                 return "unknown"
 
-        diff = now - last_seen
+        # Корректируем оба времени на часовой пояс для правильного вычисления разницы
+        now_local = now_utc + timedelta(hours=timezone)
+        last_seen_local = last_seen + timedelta(hours=timezone)
+
+        diff = now_local - last_seen_local
 
         if diff < timedelta(minutes=1):
             return "just now"
@@ -351,41 +413,46 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             days = diff.days
             return f"{days} day ago" if days == 1 else f"{days} days ago"
 
+    def format_timestamp(timestamp, tz_offset=0):
+        if not timestamp:
+            return ""
+
+        if isinstance(timestamp, str):
+            return timestamp
+
+        now = datetime.utcnow()
+        if isinstance(timestamp, datetime):
+            # Корректируем на часовой пояс
+            timestamp_local = timestamp + timedelta(hours=tz_offset)
+            now_local = now + timedelta(hours=tz_offset)
+
+            diff = now_local - timestamp_local
+            if diff.total_seconds() < 60:
+                return "just now"
+            elif diff.total_seconds() < 3600:
+                minutes = int(diff.total_seconds() / 60)
+                return f"{minutes} min ago"
+            else:
+                return timestamp_local.strftime("%H:%M")
+
+        return str(timestamp)
+
     async def select_contact(contact_id):
         nonlocal selected_contact
         selected_contact = contact_id
 
-        # Update UI to show selected state
         for control in contacts_column.controls:
             if control.data == contact_id:
                 control.bgcolor = COLOR_BG_HOVER
             else:
-                control.bgcolor = None  # Reset background
+                control.bgcolor = None
 
-        # Load messages for selected contact
         await load_messages(contact_id)
 
-        # Update chat header
         contact = next((c for c in contacts if c.server_user_id == contact_id), None)
         if contact:
-            chat_container.controls[0] = ft.Container(
-                content=ft.Row([
-                    ft.Column([
-                        ft.Text(contact.username, color=COLOR_ACCENT, size=16, font_family=FONT_FAMILY),
-                        ft.Text(
-                            "online" if contact.online else format_last_seen(contact.last_seen, contact.online),
-                            color=COLOR_SUCCESS if contact.online else COLOR_SECONDARY,
-                            size=10
-                        )
-                    ]),
-                    ft.Container(expand=True),
-                    ft.Text("ENCRYPTION: X25519-AES256GCM", color=COLOR_SUCCESS, size=10)
-                ]),
-                padding=15,
-                bgcolor=ft.Colors.with_opacity(0.05, COLOR_ACCENT)
-            )
+            await update_chat_header(contact)
 
-            # Replace empty chat with messages
             chat_container.controls[2] = chat_messages_container
 
         page.update()
@@ -425,7 +492,7 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
                         border_radius=15
                     ),
                     ft.Text(
-                        message["timestamp"],
+                        format_timestamp(message["timestamp"], timezone),
                         color=COLOR_SECONDARY,
                         size=10
                     )
@@ -433,26 +500,6 @@ async def messenger_interface(page, change_screen, app_state, container, **kwarg
             ], alignment=alignment),
             padding=ft.padding.symmetric(vertical=5, horizontal=10)
         )
-
-    def format_timestamp(timestamp):
-        if not timestamp:
-            return ""
-
-        if isinstance(timestamp, str):
-            return timestamp
-
-        now = datetime.utcnow()
-        if isinstance(timestamp, datetime):
-            diff = now - timestamp
-            if diff.total_seconds() < 60:
-                return "just now"
-            elif diff.total_seconds() < 3600:
-                minutes = int(diff.total_seconds() / 60)
-                return f"{minutes} min ago"
-            else:
-                return timestamp.strftime("%H:%M")
-
-        return str(timestamp)
 
     async def initialize_manager():
         messenger_manager.set_message_callback(handle_manager_callback)

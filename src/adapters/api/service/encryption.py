@@ -2,7 +2,7 @@ from typing import Any
 import base64
 import logging
 
-from src.adapters.encryption.service import AbstractAES256Cipher, AbstractECDHCipher
+from src.adapters.encryption.service import AbstractAES256Cipher, AbstractECDHCipher, AbstractECDSASignature
 from src.exceptions import (
     CryptographyError,
     EncryptionError,
@@ -15,32 +15,37 @@ from src.exceptions import (
 
 class EncryptionService:
     __slots__ = (
-        "_ecdh_cipher",
         "_aes_cipher",
+        "_ecdh_cipher",
+        "_ecdsa_signer",
         "_logger",
         "__weakref__"
     )
     def __init__(
             self,
-            ecdh_cipher: AbstractECDHCipher,
             aes_cipher: AbstractAES256Cipher,
+            ecdh_cipher: AbstractECDHCipher,
+            ecdsa_signer: AbstractECDSASignature,
             logger: logging.Logger = None
     ):
-        self._ecdh_cipher = ecdh_cipher
         self._aes_cipher = aes_cipher
+        self._ecdh_cipher = ecdh_cipher
+        self._ecdsa_signer = ecdsa_signer
         self._logger = logger or logging.getLogger(__name__)
 
     async def encrypt_message(
             self,
             message: str,
-            sender_private_key: str,
-            recipient_public_key: str
-    ) -> str:
+            sender_ecdsa_private_key: str,
+            ephemeral_ecdh_private_key: str,
+            ephemeral_ecdh_public_key: str,
+            recipient_ecdh_public_key: str,
+    ) -> tuple[str, str, str]:
         context = {
             "operation": "encrypt_message",
             "message_length": len(message),
-            "has_sender_private_key": bool(sender_private_key),
-            "has_recipient_public_key": bool(recipient_public_key)
+            "has_ephemeral_key": bool(ephemeral_ecdh_public_key),
+            "has_recipient_key": bool(recipient_ecdh_public_key)
         }
 
         self._logger.info(
@@ -49,24 +54,28 @@ class EncryptionService:
         )
 
         try:
-            # Derive shared secret using ECDH
+            signature = await self._ecdsa_signer.sign_message(
+                private_key_pem=sender_ecdsa_private_key,
+                message=ephemeral_ecdh_public_key
+            )
+
             shared_key = await self._ecdh_cipher.derive_shared_key(
-                sender_private_key,
-                recipient_public_key
+                ephemeral_ecdh_private_key,
+                recipient_ecdh_public_key
             )
 
             context["shared_key_derived"] = True
             context["shared_key_length"] = len(shared_key) if shared_key else 0
 
-            # Encrypt message with AES
             encrypted_message = await self._aes_cipher.encrypt(message, shared_key)
 
             self._logger.info(
                 "Message encrypted successfully",
-                extra={"context": {**context, "status": "success", "encrypted_length": len(encrypted_message)}}
+                extra={"context": {**context, "status": "success",
+                                   "encrypted_length": len(encrypted_message)}}
             )
 
-            return encrypted_message # base64 encoded
+            return encrypted_message, signature
 
         except InvalidKeyError as e:
             self._logger.error(
@@ -103,15 +112,17 @@ class EncryptionService:
 
     async def decrypt_message(
             self,
-            encrypted_message: str, # base64 encoded
-            recipient_private_key: str,
-            sender_public_key: str
+            encrypted_message: str,
+            sender_ecdsa_public_key: str,
+            recipient_ecdh_private_key: str,
+            ephemeral_ecdh_public_key: str,
+            ephemeral_signature: str,
     ) -> str:
         context = {
             "operation": "decrypt_message",
             "encrypted_message_length": len(encrypted_message) if encrypted_message else 0,
-            "has_recipient_private_key": bool(recipient_private_key),
-            "has_sender_public_key": bool(sender_public_key)
+            "has_recipient_private_key": bool(recipient_ecdh_private_key),
+            "has_ephemeral_public_key": bool(ephemeral_ecdh_public_key)
         }
 
         self._logger.info(
@@ -120,10 +131,17 @@ class EncryptionService:
         )
 
         try:
-            # Derive shared secret using ECDH
+            verify = await self._ecdsa_signer.verify_signature(
+                public_key_pem=sender_ecdsa_public_key,
+                message=ephemeral_ecdh_public_key,
+                signature=ephemeral_signature
+            )
+            if not verify:
+                raise CryptographyError("ECDH public key signature verification failed")
+
             shared_key = await self._ecdh_cipher.derive_shared_key(
-                recipient_private_key,
-                sender_public_key
+                recipient_ecdh_private_key,
+                ephemeral_ecdh_public_key
             )
 
             context["shared_key_derived"] = True

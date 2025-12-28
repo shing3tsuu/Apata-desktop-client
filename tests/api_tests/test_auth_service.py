@@ -77,6 +77,7 @@ class TestAuth:
                     LocalUserRequestDTO(
                         server_user_id=data["id"],
                         username=username,
+                        ecdsa_public_key=data["ecdsa_public_key"],
                         hashed_password=hashed_password
                     )
                 )
@@ -101,6 +102,7 @@ class TestAuth:
                     server_user_id=data["id"],
                     password=password,
                     master_key=master_key,
+                    ecdsa_public_key=data["ecdsa_public_key"],
                     ecdsa_private_key=ecdsa_private_key,
                     ecdh_public_key=None,
                     ecdh_private_key=ecdh_private_key,
@@ -134,6 +136,9 @@ class TestAuth:
                 empty_ecdsa_private_key = await key_storage.get_ecdsa_private_key(username, password)
                 assert empty_ecdsa_private_key is None
                 self._state.clear()
+                #key_storage.clear_storage("shingetsu")
+                #key_storage.clear_storage("username")
+                #key_storage.clear_storage("username123")
                 assert self._state.ecdsa_private_key is None
             finally:
                 await local_user_service.delete_user(

@@ -29,8 +29,10 @@ async def contact_interface(page, change_screen, app_state, container, **kwargs)
     search_results = []
 
     async def _change_screen(screen):
-        asyncio.create_task(contact_manager.synchronize_contacts())
-        await screen("messenger")
+        await asyncio.gather(
+            contact_manager.synchronize_contacts(),
+            screen("messenger")
+        )
 
     # UI Elements
     background = ft.Container(

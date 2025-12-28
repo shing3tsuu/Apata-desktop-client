@@ -70,8 +70,9 @@ class SECP256R1Signature(AbstractECDSASignature):
         signature = await loop.run_in_executor(
             None, self._sign_message, private_key_pem, message
         )
-        return base64.b64encode(signature).decode('utf-8')
-    def _sign_message(self, private_key_pem: str, message: str) -> bytes:
+        return signature
+
+    def _sign_message(self, private_key_pem: str, message: str) -> str:
         private_key = serialization.load_pem_private_key(
             private_key_pem.encode(),
             password=None,
@@ -83,7 +84,7 @@ class SECP256R1Signature(AbstractECDSASignature):
             ec.ECDSA(hashes.SHA256())
         )
 
-        return signature
+        return base64.b64encode(signature).decode('utf-8')
 
     async def verify_signature(self, public_key_pem: str, message: str, signature: str) -> bool:
         loop = asyncio.get_running_loop()
@@ -99,13 +100,15 @@ class SECP256R1Signature(AbstractECDSASignature):
 
         signature_bytes = base64.b64decode(signature)
 
-        public_key.verify(
-            signature_bytes,
-            message.encode(),
-            ec.ECDSA(hashes.SHA256())
-        )
-
-        return True
+        try:
+            public_key.verify(
+                signature_bytes,
+                message.encode(),
+                ec.ECDSA(hashes.SHA256())
+            )
+            return True
+        except Exception:
+            return False
 
 class SECP521R1Signature(AbstractECDSASignature):
     def __init__(self, logger: logging.Logger | None = None):

@@ -11,6 +11,7 @@ from presentation.pages.login import login_interface
 from presentation.pages.loading import loading_interface
 from presentation.pages.messenger import messenger_interface
 from presentation.pages.contact import contact_interface
+from presentation.pages.settings import settings_interface
 from presentation.pages import AppState
 
 from providers import AppProvider
@@ -21,8 +22,8 @@ PAGES = {
     "loading": loading_interface,
     "messenger": messenger_interface,
     "contact": contact_interface,
+    "settings": settings_interface,
 }
-
 
 async def main(page: ft.Page):
     logging.basicConfig(

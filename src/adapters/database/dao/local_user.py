@@ -43,7 +43,7 @@ class LocalUserDAO(AbstractLocalUserDAO):
     async def get_user_data(self, user: LocalUserRequestDTO) -> LocalUserDTO | None:
         stmt = select(LocalUser).where(LocalUser.username == user.username)
         result = await self._session.scalar(stmt)
-        if not result or result.username != user.username:
+        if not result:
             return None
         return LocalUserDTO.model_validate(result, from_attributes=True)
 

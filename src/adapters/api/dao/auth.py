@@ -32,7 +32,6 @@ class AuthHTTPDAO:
     async def logout(self, token: str) -> dict[str, Any]:
         self._http_client.set_auth_token(token)
         result = await self._http_client.post("/logout", {})
-        self.clear_token()
         return result
 
     async def get_current_user(self, token: str) -> dict[str, Any]:

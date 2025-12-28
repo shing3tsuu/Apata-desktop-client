@@ -68,9 +68,10 @@ class MessageHTTPService:
             recipient_id: int,
             message: str,
             content_type: str,
-            sender_private_key: str,
-            sender_public_key: str,
-            recipient_public_key: str
+            sender_ecdsa_private_key: str,
+            sender_ecdh_private_key: str,
+            ephemeral_ecdh_public_key: str,
+            recipient_public_key: str | None = None # not using now
     ) -> dict[str, Any]:
         context = {
             "operation": "send_encrypted_message",
@@ -86,13 +87,16 @@ class MessageHTTPService:
 
         try:
             keys = await self._auth_dao.get_public_keys(recipient_id, self._current_token)
-            recipient_public_key = keys["ecdh_public_key"]
+            recipient_ecdh_public_key = keys["ecdh_public_key"]
             # Encrypt the message
-            encrypted_message = await self._encryption_service.encrypt_message(
+            encrypted_message, signature = await self._encryption_service.encrypt_message(
                 message=message,
-                sender_private_key=sender_private_key,
-                recipient_public_key=recipient_public_key
+                sender_ecdsa_private_key=sender_ecdsa_private_key,
+                ephemeral_ecdh_private_key=sender_ecdh_private_key,
+                ephemeral_ecdh_public_key=ephemeral_ecdh_public_key,
+                recipient_ecdh_public_key=recipient_ecdh_public_key
             )
+
             context["encryption_success"] = True
             context["encrypted_length"] = len(encrypted_message)
 
@@ -101,7 +105,8 @@ class MessageHTTPService:
                 recipient_id=recipient_id,
                 message=encrypted_message,
                 content_type=content_type,
-                ephemeral_public_key=sender_public_key,
+                ephemeral_public_key=ephemeral_ecdh_public_key,
+                ephemeral_signature=signature,
                 token=self._current_token
             )
 
@@ -157,11 +162,12 @@ class MessageHTTPService:
 
     async def get_undelivered_messages(
             self,
-            user_private_key: str,
+            ecdsa_dict: dict[int, str],
+            recipient_ecdh_private_key: str,
     ) -> list[dict[str, Any]]:
         context = {
             "operation": "get_undelivered_messages",
-            "has_private_key": bool(user_private_key)
+            "has_private_key": bool(recipient_ecdh_private_key)
         }
 
         self._logger.info(
@@ -195,10 +201,15 @@ class MessageHTTPService:
                 }
 
                 try:
+                    sender_id = message.get('sender_id')
+                    sender_ecdsa_public_key = ecdsa_dict.get(sender_id)
+
                     decrypted_content = await self._encryption_service.decrypt_message(
                         encrypted_message=message['message'],
-                        recipient_private_key=user_private_key,
-                        sender_public_key=message['ephemeral_public_key']
+                        sender_ecdsa_public_key=sender_ecdsa_public_key,
+                        recipient_ecdh_private_key=recipient_ecdh_private_key,
+                        ephemeral_ecdh_public_key=message['ephemeral_public_key'],
+                        ephemeral_signature=message['ephemeral_signature']
                     )
 
                     decrypted_message = {
@@ -419,10 +430,15 @@ class MessageHTTPService:
         )
 
         try:
+            user_id = message_data["sender_id"]
+            sender_public_keys = await self._auth_dao.get_public_keys(user_id=user_id, token=self._current_token)
+
             decrypted_content = await self._encryption_service.decrypt_message(
                 encrypted_message=message_data["message"],
-                recipient_private_key=self._user_private_key,
-                sender_public_key=message_data["ephemeral_public_key"]
+                sender_ecdsa_public_key=sender_public_keys["ecdsa_public_key"],
+                recipient_ecdh_private_key=self._user_private_key,
+                ephemeral_ecdh_public_key=message_data["ephemeral_public_key"],
+                ephemeral_signature=message_data["ephemeral_signature"]
             )
 
             processed_message = {
@@ -510,41 +526,45 @@ class MessageHTTPService:
                 )
 
     async def stop_websocket_listener(self):
-        context = {"operation": "stop_websocket_listener"}
+        try:
+            context = {"operation": "stop_websocket_listener"}
 
-        if not self._is_listening:
-            self._logger.debug(
-                "WebSocket listener already stopped",
+            if not self._is_listening:
+                self._logger.debug(
+                    "WebSocket listener already stopped",
+                    extra={"context": context}
+                )
+                return
+
+            self._logger.info(
+                "Stopping WebSocket listener",
                 extra={"context": context}
             )
-            return
 
-        self._logger.info(
-            "Stopping WebSocket listener",
-            extra={"context": context}
-        )
+            self._is_listening = False
 
-        self._is_listening = False
+            # Cancel listening task
+            if self._listening_task and not self._listening_task.done():
+                self._listening_task.cancel()
+                try:
+                    await self._listening_task
+                except asyncio.CancelledError:
+                    pass
+                self._listening_task = None
 
-        # Cancel listening task
-        if self._listening_task and not self._listening_task.done():
-            self._listening_task.cancel()
-            try:
-                await self._listening_task
-            except asyncio.CancelledError:
-                pass
-            self._listening_task = None
+            # Disconnect WebSocket
+            await self._websocket_dao.disconnect()
 
-        # Disconnect WebSocket
-        await self._websocket_dao.disconnect()
+            # Clear state
+            self._message_callback = None
 
-        # Clear state
-        self._message_callback = None
-
-        self._logger.info(
-            "WebSocket listener stopped successfully",
-            extra={"context": {**context, "status": "success"}}
-        )
+            self._logger.info(
+                "WebSocket listener stopped successfully",
+                extra={"context": {**context, "status": "success"}}
+            )
+        except Exception as e:
+            self._logger.error(f"Error stopping WebSocket listener: {e}", exc_info=True)
+            raise
 
     def get_connection_status(self) -> dict[str, Any]:
         status = {

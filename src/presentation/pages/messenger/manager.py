@@ -50,6 +50,16 @@ class MessengerManager:
     def set_message_callback(self, callback):
         self._message_callback = callback
 
+    async def get_timezone(self) -> int:
+        try:
+            async with self._container() as request_container:
+                local_user_service = await request_container.get(LocalUserService)
+                local_user = await local_user_service.get_user_data(LocalUserRequestDTO(username=self._state.username))
+                return local_user.timezone
+        except Exception as e:
+            self._logger.error(f"Error getting timezone: {e}")
+            return 0
+
     async def get_contacts(self) -> list[Contact]:
         try:
             async with self._container() as request_container:
@@ -59,6 +69,7 @@ class MessengerManager:
                     Contact(
                         server_user_id=contact.server_user_id,
                         username=contact.username,
+                        ecdsa_public_key=contact.ecdsa_public_key,
                         ecdh_public_key=contact.ecdh_public_key,
                         last_seen=contact.last_seen,
                         online=contact.online,
@@ -238,13 +249,20 @@ class MessengerManager:
             self._logger.info(f"User status update: user_{user_id} -> {'online' if online else 'offline'}")
 
             async with self._container() as request_container:
+                auth_http_service = await request_container.get(AuthHTTPService)
+                auth_http_service.set_token(self._state.token)
                 contact_service = await request_container.get(ContactService)
 
-                await contact_service.update_contact_status(
-                    local_user_id=self._state.local_user_id,
-                    server_user_id=user_id,
-                    online=online,
-                    last_seen=datetime.fromisoformat(timestamp) if timestamp else datetime.utcnow()
+                keys = await auth_http_service.get_public_keys(user_id=user_id)
+
+                await contact_service.update_contact(
+                    contact=ContactRequestDTO(
+                        local_user_id=self._state.local_user_id,
+                        server_user_id=user_id,
+                        ecdh_public_key=keys.get("ecdh_public_key"),
+                        online=online,
+                        last_seen=datetime.utcnow()
+                    )
                 )
 
             if self._message_callback:
@@ -291,6 +309,7 @@ class MessengerManager:
             return False
 
     async def stop_ws(self):
+        self._logger.info("Trying stop WebSocket connection")
         try:
             async with self._container() as request_container:
                 message_http_service = await request_container.get(MessageHTTPService)
@@ -302,7 +321,7 @@ class MessengerManager:
                 self._state.update_ws_status(False)
 
         except Exception as e:
-            self.logger.error(f"Failed to stop message ws: {e}")
+            self._logger.error(f"Failed to stop message ws: {e}")
             raise
 
     async def send_message(self, contact_id: int, text: str, content_type: str | None = None) -> bool:
@@ -326,8 +345,9 @@ class MessengerManager:
                     recipient_id=contact_id,
                     message=text,
                     content_type=content_type,
-                    sender_private_key=self._state.ecdh_private_key,
-                    sender_public_key=self._state.ecdh_public_key,
+                    sender_ecdsa_private_key=self._state.ecdsa_private_key,
+                    sender_ecdh_private_key=self._state.ecdh_private_key,
+                    ephemeral_ecdh_public_key=self._state.ecdh_public_key,
                     recipient_public_key=contact.ecdh_public_key,
                 )
 
@@ -372,10 +392,13 @@ class MessengerManager:
 
     async def logout(self):
         try:
-            await self.stop_ws()
-            self._state.clear()
-            self._logger.info("Successfully logged out")
-            return True
+            async with self._container() as request_container:
+                auth_http_service = await request_container.get(AuthHTTPService)
+                auth_http_service.set_token(self._state.token)
+                await auth_http_service.logout()
+                self._state.clear()
+                self._logger.info("Successfully logged out")
+                return True
         except Exception as e:
             self._logger.error(f"Error logging out: {e}")
             return False

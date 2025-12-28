@@ -19,12 +19,14 @@ class CommonHTTPClient:
             timeout: float = 60.0,
             max_retries: int = 3,
             retry_delay: float = 1.0,
+            verify: bool = False,
             logger: logging.Logger | None = None
     ):
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.verify = verify
         self._client: httpx.AsyncClient | None = None
         self._current_token: str | None = None
 
@@ -47,6 +49,7 @@ class CommonHTTPClient:
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=self.timeout,
+            verify=self.verify,
             headers=headers
         )
 

@@ -85,6 +85,7 @@ class ContactHTTPService:
                     server_user_id=user_id_key,
                     username=user_data['username'],
                     status=status_map.get(user_id_key, 'none'),
+                    ecdsa_public_key=user_data.get('ecdsa_public_key', ''),
                     ecdh_public_key=user_data.get('ecdh_public_key', ''),
                     last_seen=user_data.get('last_seen', ''),
                     online=user_data.get('online', False),

@@ -17,6 +17,7 @@ class MessageHTTPDAO:
             message: str,
             content_type: str | None,
             ephemeral_public_key: str,
+            ephemeral_signature: str,
             token: str
     ) -> dict[str, Any]:
         self._http_client.set_auth_token(token)
@@ -24,7 +25,8 @@ class MessageHTTPDAO:
             "recipient_id": recipient_id,
             "message": message,
             "content_type": content_type,
-            "ephemeral_public_key": ephemeral_public_key
+            "ephemeral_public_key": ephemeral_public_key,
+            "ephemeral_signature": ephemeral_signature
         }
         return await self._http_client.post("/send", data)
 

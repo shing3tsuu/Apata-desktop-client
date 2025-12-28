@@ -7,6 +7,7 @@ from datetime import datetime
 class Contact:
     server_user_id: int
     username: str
+    ecdsa_public_key: str
     ecdh_public_key: str
     last_seen: datetime
     online: bool
@@ -31,6 +32,7 @@ class AppState:
     server_user_id: int | None = None
     password: str | None = None
     master_key: bytes | None = None
+    ecdsa_public_key: str | None = None
     ecdsa_private_key: str | None = None
     ecdh_public_key: str | None = None
     ecdh_private_key: str | None = None
@@ -50,6 +52,7 @@ class AppState:
             server_user_id: int,
             password: str,
             master_key: bytes,
+            ecdsa_public_key: str,
             ecdsa_private_key: str,
             ecdh_public_key: str,
             ecdh_private_key: str,
@@ -60,6 +63,7 @@ class AppState:
         self.server_user_id = server_user_id
         self.password = password
         self.master_key = master_key
+        self.ecdsa_public_key = ecdsa_public_key
         self.ecdsa_private_key = ecdsa_private_key
         self.ecdh_public_key = ecdh_public_key
         self.ecdh_private_key = ecdh_private_key

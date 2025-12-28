@@ -69,10 +69,11 @@ class AppProvider(Provider):
     @provide(scope=Scope.APP)
     async def api_client(self, logger: logging.Logger) -> CommonHTTPClient:
         client = CommonHTTPClient(
-            base_url="http://127.0.0.1:8000/",
+            base_url="https://192.168.99.100/",
             timeout=60.0,
             max_retries=3,
             retry_delay=1.0,
+            verify=False,
             logger=logger
         )
         await client.__aenter__()
@@ -93,7 +94,7 @@ class AppProvider(Provider):
     @provide(scope=Scope.APP)
     async def websocket_dao(self, logger: logging.Logger) -> WebSocketDAO:
         return WebSocketDAO(
-            base_ws_url="ws://127.0.0.1:8000/",
+            base_ws_url="wss://192.168.99.100/",
             logger=logger
         )
 
@@ -143,13 +144,15 @@ class AppProvider(Provider):
     @provide(scope=Scope.REQUEST)
     async def encryption_service(
             self,
-            ecdh_cipher: AbstractECDHCipher,
             aes_cipher: AbstractAES256Cipher,
+            ecdh_cipher: AbstractECDHCipher,
+            ecdsa_signer: AbstractECDSASignature,
             logger: logging.Logger
     ) -> EncryptionService:
         return EncryptionService(
-            ecdh_cipher=ecdh_cipher,
             aes_cipher=aes_cipher,
+            ecdh_cipher=ecdh_cipher,
+            ecdsa_signer=ecdsa_signer,
             logger=logger
         )
 

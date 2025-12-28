@@ -16,7 +16,9 @@ class LocalUser(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     server_user_id: Mapped[int] = mapped_column(BigInteger)
     username: Mapped[str] = mapped_column(String(50))
+    ecdsa_public_key: Mapped[str] = mapped_column(Text)
     hashed_password: Mapped[str] = mapped_column(String(100), nullable=False)
+    timezone: Mapped[Optional[int]] = mapped_column(default=0)
 
     contacts: Mapped[List["Contact"]] = relationship(
         "Contact",
@@ -43,6 +45,7 @@ class Contact(Base):
     server_user_id: Mapped[int] = mapped_column(BigInteger)
     status: Mapped[Optional[str]] = mapped_column(String(50))
     username: Mapped[str] = mapped_column(String(50))
+    ecdsa_public_key: Mapped[str] = mapped_column(Text)
     ecdh_public_key: Mapped[str] = mapped_column(Text)
     last_seen: Mapped[Optional[datetime]]
     online: Mapped[bool] = mapped_column(default=False)
