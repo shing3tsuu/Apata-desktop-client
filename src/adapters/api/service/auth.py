@@ -1,3 +1,4 @@
+from inspect import signature
 from typing import Dict, Any
 import logging
 from datetime import datetime
@@ -366,7 +367,7 @@ class AuthHTTPService:
                 context=context
             ) from e
 
-    async def update_ecdh_key(self) -> tuple[str, str]:
+    async def update_ecdh_key(self, sender_ecdsa_private_key: str) -> tuple[str, str]:
         context = {"operation": "update_ecdh_key"}
 
         if not self._is_authenticated:
@@ -384,8 +385,17 @@ class AuthHTTPService:
             # Generate new key pair
             ecdh_private, ecdh_public = await self._ecdh_cipher.generate_key_pair()
 
+            signature = await self._ecdsa_signer.sign_message(
+                private_key_pem=sender_ecdsa_private_key,
+                message=ecdh_public
+            )
+
             # Update key on server
-            await self._auth_dao.update_ecdh_key(ecdh_public, token=self._current_token)
+            await self._auth_dao.update_ecdh_key(
+                ecdh_public_key=ecdh_public,
+                signature=signature,
+                token=self._current_token
+            )
 
             self._logger.info(
                 "ECDH key updated successfully",

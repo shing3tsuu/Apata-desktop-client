@@ -26,7 +26,8 @@ from src.adapters.database.dto import (
 from src.adapters.encryption.service import (
     AbstractAES256Cipher,
     AbstractPasswordHasher,
-    AbstractECDHCipher
+    AbstractECDHCipher,
+    AbstractECDSASignature
 )
 from src.adapters.encryption.storage import EncryptedKeyStorage
 
@@ -126,12 +127,11 @@ class LoadingManager:
                 message_service = await request_container.get(MessageService)
                 aes_cipher = await request_container.get(AbstractAES256Cipher)
 
-                # Получаем всех контактов и создаем словарь sender_id -> ecdsa_public_key
                 contacts = await contact_service.get_contacts(self._state.local_user_id)
                 ecdsa_dict = {}
 
                 for contact in contacts:
-                    if contact.ecdsa_public_key:  # Проверяем, что ключ есть
+                    if contact.ecdsa_public_key:
                         ecdsa_dict[contact.server_user_id] = contact.ecdsa_public_key
 
                 self._logger.info(f"Loaded ECDSA keys for {len(ecdsa_dict)} contacts")
@@ -148,11 +148,9 @@ class LoadingManager:
 
                 self._logger.info(f"Received {len(new_messages)} new messages")
 
-                # Добавляем новые сообщения в локальное хранилище и состояние
                 for new_message in new_messages:
                     self._logger.info(f"Adding new message from: {new_message['sender_id']} to local storage...")
 
-                    # Шифруем контент для локального хранения
                     encrypted_message = await aes_cipher.encrypt(
                         new_message['decrypted_content'],
                         self._state.master_key
@@ -187,7 +185,7 @@ class LoadingManager:
 
                 self._logger.info("Rotating keys...")
 
-                ecdh_private_key, ecdh_public_key = await auth_http_service.update_ecdh_key()
+                ecdh_private_key, ecdh_public_key = await auth_http_service.update_ecdh_key(self._state.ecdsa_private_key)
 
                 if not ecdh_private_key:
                     return False, "Failed to rotate keys"

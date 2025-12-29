@@ -68,6 +68,7 @@ class MessageHTTPService:
             recipient_id: int,
             message: str,
             content_type: str,
+            recipient_ecdsa_public_key: str,
             sender_ecdsa_private_key: str,
             sender_ecdh_private_key: str,
             ephemeral_ecdh_public_key: str,
@@ -88,13 +89,16 @@ class MessageHTTPService:
         try:
             keys = await self._auth_dao.get_public_keys(recipient_id, self._current_token)
             recipient_ecdh_public_key = keys["ecdh_public_key"]
+            recipient_ecdh_signature = keys["ecdh_signature"]
             # Encrypt the message
             encrypted_message, signature = await self._encryption_service.encrypt_message(
                 message=message,
                 sender_ecdsa_private_key=sender_ecdsa_private_key,
+                recipient_ecdsa_public_key=recipient_ecdsa_public_key,
                 ephemeral_ecdh_private_key=sender_ecdh_private_key,
                 ephemeral_ecdh_public_key=ephemeral_ecdh_public_key,
-                recipient_ecdh_public_key=recipient_ecdh_public_key
+                recipient_ecdh_public_key=recipient_ecdh_public_key,
+                recipient_ecdh_signature=recipient_ecdh_signature
             )
 
             context["encryption_success"] = True

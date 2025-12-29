@@ -47,9 +47,12 @@ class AuthHTTPDAO:
         data = {"ecdsa_public_key": ecdsa_public_key}
         return await self._http_client.put("/ecdsa-update-key", data)
 
-    async def update_ecdh_key(self, ecdh_public_key: str, token: str) -> dict[str, Any]:
+    async def update_ecdh_key(self, ecdh_public_key: str, signature: str, token: str) -> dict[str, Any]:
         self._http_client.set_auth_token(token)
-        data = {"ecdh_public_key": ecdh_public_key}
+        data = {
+            "ecdh_public_key": ecdh_public_key,
+            "ecdh_signature": signature
+        }
         return await self._http_client.put("/ecdh-update-key", data)
 
     async def refresh_token(self, token: str) -> dict[str, Any]:

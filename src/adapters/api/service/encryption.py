@@ -37,9 +37,11 @@ class EncryptionService:
             self,
             message: str,
             sender_ecdsa_private_key: str,
+            recipient_ecdsa_public_key: str,
             ephemeral_ecdh_private_key: str,
             ephemeral_ecdh_public_key: str,
             recipient_ecdh_public_key: str,
+            recipient_ecdh_signature
     ) -> tuple[str, str, str]:
         context = {
             "operation": "encrypt_message",
@@ -54,6 +56,15 @@ class EncryptionService:
         )
 
         try:
+            verify = await self._ecdsa_signer.verify_signature(
+                public_key_pem=recipient_ecdsa_public_key,
+                message=recipient_ecdh_public_key,
+                signature=recipient_ecdh_signature
+            )
+
+            if not verify:
+                raise CryptographyError("Invalid ECDH signature, high probability of MITM attack.")
+
             signature = await self._ecdsa_signer.sign_message(
                 private_key_pem=sender_ecdsa_private_key,
                 message=ephemeral_ecdh_public_key
@@ -137,7 +148,7 @@ class EncryptionService:
                 signature=ephemeral_signature
             )
             if not verify:
-                raise CryptographyError("ECDH public key signature verification failed")
+                raise CryptographyError("Invalid ECDH signature, high probability of MITM attack.")
 
             shared_key = await self._ecdh_cipher.derive_shared_key(
                 recipient_ecdh_private_key,

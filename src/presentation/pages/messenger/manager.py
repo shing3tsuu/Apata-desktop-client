@@ -345,10 +345,10 @@ class MessengerManager:
                     recipient_id=contact_id,
                     message=text,
                     content_type=content_type,
+                    recipient_ecdsa_public_key=contact.ecdsa_public_key,
                     sender_ecdsa_private_key=self._state.ecdsa_private_key,
                     sender_ecdh_private_key=self._state.ecdh_private_key,
                     ephemeral_ecdh_public_key=self._state.ecdh_public_key,
-                    recipient_public_key=contact.ecdh_public_key,
                 )
 
                 if not message:
