@@ -4,11 +4,13 @@ import logging
 from typing import Callable, Optional, Dict, Any
 import websockets
 from src.exceptions import NetworkError, APIError
-
+import ssl
 
 class WebSocketDAO:
-    def __init__(self, base_ws_url: str, logger: logging.Logger = None):
+    def __init__(self, base_ws_url: str, logger: logging.Logger = None, verify: bool = False):
         self.base_ws_url = base_ws_url.rstrip('/')
+        self.verify = verify
+
         self._logger = logger or logging.getLogger(__name__)
         self._websocket = None
         self._is_connected = False
@@ -26,12 +28,19 @@ class WebSocketDAO:
     async def connect(self, token: str) -> bool:
         self._current_token = token
         try:
+            ssl_context = None
+            if not self.verify:
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+
             url = f"{self.base_ws_url}/ws?token={token}"
             self._websocket = await websockets.connect(
                 url,
                 ping_interval=20,
                 ping_timeout=10,
-                close_timeout=10
+                close_timeout=10,
+                ssl=ssl_context if ssl_context else True
             )
             self._is_connected = True
             self._reconnect_delay = 1

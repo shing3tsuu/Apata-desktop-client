@@ -42,7 +42,7 @@ class EncryptionService:
             ephemeral_ecdh_public_key: str,
             recipient_ecdh_public_key: str,
             recipient_ecdh_signature
-    ) -> tuple[str, str, str]:
+    ) -> tuple[str, str]:
         context = {
             "operation": "encrypt_message",
             "message_length": len(message),

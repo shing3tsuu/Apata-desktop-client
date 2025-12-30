@@ -69,7 +69,7 @@ class AppProvider(Provider):
     @provide(scope=Scope.APP)
     async def api_client(self, logger: logging.Logger) -> CommonHTTPClient:
         client = CommonHTTPClient(
-            base_url="https://192.168.99.100/",
+            base_url="https://82.202.139.251",
             timeout=60.0,
             max_retries=3,
             retry_delay=1.0,
@@ -94,8 +94,9 @@ class AppProvider(Provider):
     @provide(scope=Scope.APP)
     async def websocket_dao(self, logger: logging.Logger) -> WebSocketDAO:
         return WebSocketDAO(
-            base_ws_url="wss://192.168.99.100/",
-            logger=logger
+            base_ws_url="wss://82.202.139.251",
+            logger=logger,
+            verify=False
         )
 
     @provide(scope=Scope.REQUEST)
