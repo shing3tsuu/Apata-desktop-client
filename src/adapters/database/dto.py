@@ -4,7 +4,7 @@ from typing import List
 
 class LocalUserRequestDTO(BaseModel):
     server_user_id: int | None = None
-    username: str | None = None
+    username: str
     ecdsa_public_key: str | None = None
     hashed_password: str | None = None
     timezone: int | None = None
@@ -13,7 +13,7 @@ class LocalUserDTO(LocalUserRequestDTO):
     id: int
 
 class ContactRequestDTO(BaseModel):
-    local_user_id: int | None = None
+    local_user_id: int
     server_user_id: int | None = None
     status: str | None = None
     username: str | None = None

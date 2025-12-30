@@ -117,11 +117,13 @@ class AppProvider(Provider):
             self,
             contact_dao: ContactHTTPDAO,
             auth_dao: AuthHTTPDAO,
+            ecdsa_signer: AbstractECDSASignature,
             logger: logging.Logger
     ) -> ContactHTTPService:
         return ContactHTTPService(
             contact_dao=contact_dao,
             auth_dao=auth_dao,
+            ecdsa_signer=ecdsa_signer,
             logger=logger
         )
 

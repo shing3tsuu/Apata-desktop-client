@@ -1,59 +1,110 @@
-import flet as ft
+import sys
 import asyncio
 import logging
 
+from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
+from PyQt6.QtCore import Qt
+import qasync
+
 from dishka import make_async_container
 
-from presentation.pages.login import login_interface
-from presentation.pages.loading import loading_interface
-from presentation.pages.messenger import messenger_interface
-from presentation.pages.contact import contact_interface
-from presentation.pages.settings import settings_interface
+from presentation.pages.login import LoginInterface
+from presentation.pages.loading import LoadingInterface
+from presentation.pages.messenger import MessengerInterface
+from presentation.pages.contact import ContactInterface
+from presentation.pages.settings import SettingsInterface
 from presentation.pages import AppState
 
 from providers import AppProvider
 
-# Dictionary for storing all interfaces
-PAGES = {
-    "login": login_interface,
-    "loading": loading_interface,
-    "messenger": messenger_interface,
-    "contact": contact_interface,
-    "settings": settings_interface,
-}
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.container = None
+        self.app_state = None
+        self.current_screen = None
+        self.setup_ui()
 
-async def main(page: ft.Page):
+    def setup_ui(self):
+        self.setWindowTitle("APATA")
+        self.resize(1600, 900)
+
+        self.screen_stack = QStackedWidget()
+        self.setCentralWidget(self.screen_stack)
+
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #000000;
+            }
+        """)
+
+    async def initialize(self):
+        try:
+            self.container = make_async_container(AppProvider())
+            self.app_state = AppState()
+
+            self.screens = {
+                "login": LoginInterface(self),
+                "loading": LoadingInterface(self),
+                "messenger": MessengerInterface(self),
+                "contact": ContactInterface(self),
+                "settings": SettingsInterface(self),
+            }
+
+            for name, screen in self.screens.items():
+                self.screen_stack.addWidget(screen)
+
+            await self.show_screen("login")
+
+        except Exception as e:
+            logging.error(f"Initialization error: {e}")
+            raise
+
+    async def show_screen(self, screen_name: str, **kwargs):
+        if screen_name not in self.screens:
+            logging.error(f"Screen '{screen_name}' not found")
+            return
+
+        screen = self.screens[screen_name]
+
+        if hasattr(screen, 'prepare_screen'):
+            await screen.prepare_screen(**kwargs)
+
+        self.screen_stack.setCurrentWidget(screen)
+        self.current_screen = screen_name
+
+    async def cleanup(self):
+        if self.container:
+            await self.container.close()
+
+
+async def main():
+    app = QApplication(sys.argv)
+
+    loop = qasync.QEventLoop(app)
+    asyncio.set_event_loop(loop)
+
+    window = MainWindow()
+    window.show()
+
+    await window.initialize()
+
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await window.cleanup()
+
+
+if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         force=True
     )
-    # Initializing the application state
-    container = make_async_container(
-        AppProvider()
-    )
-    app_state = AppState()
 
-    page.title = "APATA"
-    page.window.width = 960
-    page.window.height = 720
-
-    async def change_screen(screen_name, **kwargs):
-        page.controls.clear()
-
-        if screen_name in PAGES:
-            interface_func = PAGES[screen_name]
-            if asyncio.iscoroutinefunction(interface_func):
-                await interface_func(page, change_screen, app_state, container, **kwargs)
-            else:
-                interface_func(page, change_screen, app_state, container, **kwargs)
-
-        page.update()
     try:
-        await change_screen("login")
-    finally:
-        await container.close()
-
-
-if __name__ == "__main__":
-    ft.app(target=main, assets_dir="assets")
+        asyncio.run(main())
+    except Exception as e:
+        logging.error(f"Application error: {e}")

@@ -20,7 +20,7 @@ class AbstractContactDAO(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def get_contacts(self, contacts: ContactRequestDTO) -> list[ContactDTO]:
+    async def get_contacts(self, local_user_id: int) -> list[ContactDTO]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -102,7 +102,7 @@ class ContactDAO(AbstractContactDAO):
         result = await self._session.scalar(stmt)
         return ContactDTO.model_validate(result, from_attributes=True) if result else None
 
-    async def delete_contact(self, contact_id: int | None = None) -> bool:
+    async def delete_contact(self, contact_id: int) -> bool:
         stmt = delete(Contact).where(Contact.id == contact_id)
         result = await self._session.execute(stmt)
         return result.rowcount > 0

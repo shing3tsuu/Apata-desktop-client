@@ -65,28 +65,29 @@ class EncryptionService:
             if not verify:
                 raise CryptographyError("Invalid ECDH signature, high probability of MITM attack.")
 
-            signature = await self._ecdsa_signer.sign_message(
-                private_key_pem=sender_ecdsa_private_key,
-                message=ephemeral_ecdh_public_key
-            )
+            else:
+                signature = await self._ecdsa_signer.sign_message(
+                    private_key_pem=sender_ecdsa_private_key,
+                    message=ephemeral_ecdh_public_key
+                )
 
-            shared_key = await self._ecdh_cipher.derive_shared_key(
-                ephemeral_ecdh_private_key,
-                recipient_ecdh_public_key
-            )
+                shared_key = await self._ecdh_cipher.derive_shared_key(
+                    ephemeral_ecdh_private_key,
+                    recipient_ecdh_public_key
+                )
 
-            context["shared_key_derived"] = True
-            context["shared_key_length"] = len(shared_key) if shared_key else 0
+                context["shared_key_derived"] = True
+                context["shared_key_length"] = len(shared_key) if shared_key else 0
 
-            encrypted_message = await self._aes_cipher.encrypt(message, shared_key)
+                encrypted_message = await self._aes_cipher.encrypt(message, shared_key)
 
-            self._logger.info(
-                "Message encrypted successfully",
-                extra={"context": {**context, "status": "success",
-                                   "encrypted_length": len(encrypted_message)}}
-            )
+                self._logger.info(
+                    "Message encrypted successfully",
+                    extra={"context": {**context, "status": "success",
+                                       "encrypted_length": len(encrypted_message)}}
+                )
 
-            return encrypted_message, signature
+                return encrypted_message, signature
 
         except InvalidKeyError as e:
             self._logger.error(
@@ -150,23 +151,24 @@ class EncryptionService:
             if not verify:
                 raise CryptographyError("Invalid ECDH signature, high probability of MITM attack.")
 
-            shared_key = await self._ecdh_cipher.derive_shared_key(
-                recipient_ecdh_private_key,
-                ephemeral_ecdh_public_key
-            )
+            else:
+                shared_key = await self._ecdh_cipher.derive_shared_key(
+                    recipient_ecdh_private_key,
+                    ephemeral_ecdh_public_key
+                )
 
-            context["shared_key_derived"] = True
-            context["shared_key_length"] = len(shared_key) if shared_key else 0
+                context["shared_key_derived"] = True
+                context["shared_key_length"] = len(shared_key) if shared_key else 0
 
-            # Decrypt message with AES
-            decrypted_message = await self._aes_cipher.decrypt(encrypted_message, shared_key)
+                # Decrypt message with AES
+                decrypted_message = await self._aes_cipher.decrypt(encrypted_message, shared_key)
 
-            self._logger.info(
-                "Message decrypted successfully",
-                extra={"context": {**context, "status": "success", "decrypted_length": len(decrypted_message)}}
-            )
+                self._logger.info(
+                    "Message decrypted successfully",
+                    extra={"context": {**context, "status": "success", "decrypted_length": len(decrypted_message)}}
+                )
 
-            return decrypted_message
+                return decrypted_message
 
         except InvalidKeyError as e:
             self._logger.error(
