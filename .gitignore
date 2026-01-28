@@ -34,3 +34,4 @@ config.ini
 
 /docs/_build/
 /tests/api_tests/test_auth_service.py
+apata.db
