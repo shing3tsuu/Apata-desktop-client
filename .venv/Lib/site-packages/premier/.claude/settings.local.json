@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(python -m pytest tests/test_handler_coverage.py::TestAsyncDefaultHandler::test_leaky_bucket_immediate_execution -v)",
+      "Bash(ls:*)",
+      "Bash(uv run pytest ../tests/test_handler_coverage.py::TestAsyncDefaultHandler::test_leaky_bucket_immediate_execution -v)",
+      "Bash(uv run pytest ../tests/test_handler_coverage.py -k \"leaky_bucket\" -v)",
+      "Bash(uv run:*)",
+      "Bash(rm:*)"
+    ],
+    "deny": []
+  }
+}
