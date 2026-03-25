@@ -4,9 +4,15 @@ import logging
 from typing import List, Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QComboBox, QSizePolicy,
-    QScrollArea
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QFrame,
+    QComboBox,
+    QSizePolicy,
+    QScrollArea,
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QFontDatabase
@@ -460,8 +466,7 @@ class SettingsInterface(QWidget):
         # Initialize settings manager
         if not self.settings_manager:
             self.settings_manager = SettingsManager(
-                self.main_window.app_state,
-                self.main_window.container
+                self.main_window.app_state, self.main_window.container
             )
 
         # Load timezone settings
@@ -496,7 +501,9 @@ class SettingsInterface(QWidget):
                 self.timezone_combo.setCurrentIndex(index)
 
             # Update current timezone label
-            self.current_timezone_label.setText(f"Current timezone: UTC{current_timezone_str}")
+            self.current_timezone_label.setText(
+                f"Current timezone: UTC{current_timezone_str}"
+            )
 
         except Exception as e:
             logging.error(f"Error loading timezone settings: {e}")
@@ -533,7 +540,9 @@ class SettingsInterface(QWidget):
                 self.show_status_message("Settings saved successfully", COLOR_SUCCESS)
 
                 # Update current timezone label
-                self.current_timezone_label.setText(f"Current timezone: UTC{timezone_str}")
+                self.current_timezone_label.setText(
+                    f"Current timezone: UTC{timezone_str}"
+                )
 
                 # Refresh timezone in other screens if needed
                 await self.refresh_other_screens()
@@ -548,7 +557,7 @@ class SettingsInterface(QWidget):
         """Refresh other screens that might use timezone data"""
         # Refresh messenger screen if it's active
         messenger_screen = self.main_window.screens.get("messenger")
-        if messenger_screen and hasattr(messenger_screen, 'load_timezone'):
+        if messenger_screen and hasattr(messenger_screen, "load_timezone"):
             await messenger_screen.load_timezone()
 
     async def go_back(self):
@@ -566,7 +575,7 @@ class SettingsInterface(QWidget):
         status_label.setStyleSheet(f"""
             QLabel {{
                 background-color: {color};
-                color: {'#000000' if color == COLOR_SUCCESS else COLOR_TEXT_PRIMARY};
+                color: {"#000000" if color == COLOR_SUCCESS else COLOR_TEXT_PRIMARY};
                 padding: 10px;
                 border-radius: 6px;
                 font-size: 12px;
@@ -580,7 +589,7 @@ class SettingsInterface(QWidget):
         layout = self.layout()
         if layout:
             # Remove previous status if exists
-            if hasattr(self, '_status_widget') and self._status_widget:
+            if hasattr(self, "_status_widget") and self._status_widget:
                 layout.removeWidget(self._status_widget)
                 self._status_widget.deleteLater()
 
@@ -593,7 +602,7 @@ class SettingsInterface(QWidget):
 
     def remove_status_message(self):
         """Remove status message"""
-        if hasattr(self, '_status_widget') and self._status_widget:
+        if hasattr(self, "_status_widget") and self._status_widget:
             layout = self.layout()
             if layout:
                 layout.removeWidget(self._status_widget)

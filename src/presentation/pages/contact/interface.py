@@ -5,9 +5,17 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QScrollArea, QLineEdit,
-    QStackedWidget, QSizePolicy, QSpacerItem
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QFrame,
+    QScrollArea,
+    QLineEdit,
+    QStackedWidget,
+    QSizePolicy,
+    QSpacerItem,
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QFontDatabase
@@ -101,7 +109,9 @@ class ContactCard(QFrame):
             status_text = "online"
             status_color = COLOR_SUCCESS
         else:
-            status_text = self._format_last_seen(self.contact.last_seen, self.contact.online)
+            status_text = self._format_last_seen(
+                self.contact.last_seen, self.contact.online
+            )
             status_color = COLOR_TEXT_MUTED
 
         status_label = QLabel(status_text)
@@ -140,7 +150,9 @@ class ContactCard(QFrame):
                     background-color: #90EE90;
                 }}
             """)
-            add_btn.clicked.connect(lambda: self.action_requested.emit("add", self.contact_id))
+            add_btn.clicked.connect(
+                lambda: self.action_requested.emit("add", self.contact_id)
+            )
             layout.addWidget(add_btn)
 
         elif self.section == "pending":
@@ -160,7 +172,9 @@ class ContactCard(QFrame):
                     background-color: #90EE90;
                 }}
             """)
-            accept_btn.clicked.connect(lambda: self.action_requested.emit("accept", self.contact_id))
+            accept_btn.clicked.connect(
+                lambda: self.action_requested.emit("accept", self.contact_id)
+            )
 
             reject_btn = QPushButton("✗")
             reject_btn.setFixedSize(30, 30)
@@ -177,7 +191,9 @@ class ContactCard(QFrame):
                     background-color: #FF6B6B;
                 }}
             """)
-            reject_btn.clicked.connect(lambda: self.action_requested.emit("reject", self.contact_id))
+            reject_btn.clicked.connect(
+                lambda: self.action_requested.emit("reject", self.contact_id)
+            )
 
             layout.addWidget(accept_btn)
             layout.addWidget(reject_btn)
@@ -200,7 +216,9 @@ class ContactCard(QFrame):
                     background-color: #90EE90;
                 }}
             """)
-            restore_btn.clicked.connect(lambda: self.action_requested.emit("restore", self.contact_id))
+            restore_btn.clicked.connect(
+                lambda: self.action_requested.emit("restore", self.contact_id)
+            )
             layout.addWidget(restore_btn)
 
         elif self.section == "contacts":
@@ -221,7 +239,9 @@ class ContactCard(QFrame):
                     background-color: #FF6B6B;
                 }}
             """)
-            block_btn.clicked.connect(lambda: self.action_requested.emit("block", self.contact_id))
+            block_btn.clicked.connect(
+                lambda: self.action_requested.emit("block", self.contact_id)
+            )
             layout.addWidget(block_btn)
 
     def _format_last_seen(self, last_seen, online: bool) -> str:
@@ -234,7 +254,7 @@ class ContactCard(QFrame):
 
         if isinstance(last_seen, str):
             try:
-                last_seen = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+                last_seen = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
             except:
                 return "unknown"
 
@@ -432,7 +452,9 @@ class ContactInterface(QWidget):
                 color: {COLOR_BG_PRIMARY};
             }}
         """)
-        sync_btn.clicked.connect(lambda: asyncio.create_task(self.synchronize_contacts()))
+        sync_btn.clicked.connect(
+            lambda: asyncio.create_task(self.synchronize_contacts())
+        )
 
         # Logout button
         logout_btn = QPushButton("LOGOUT")
@@ -493,7 +515,12 @@ class ContactInterface(QWidget):
         self.pending_tab = QPushButton("PENDING")
         self.blacklist_tab = QPushButton("BLACKLIST")
 
-        for tab in [self.contacts_tab, self.search_tab, self.pending_tab, self.blacklist_tab]:
+        for tab in [
+            self.contacts_tab,
+            self.search_tab,
+            self.pending_tab,
+            self.blacklist_tab,
+        ]:
             tab.setFixedHeight(50)
             tab.setCheckable(True)
             tab.setStyleSheet(f"""
@@ -621,8 +648,12 @@ class ContactInterface(QWidget):
                 background-color: #555555;
             }
         """)
-        self.contacts_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.contacts_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.contacts_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.contacts_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.contacts_scroll_area.setWidgetResizable(True)
 
         # Contacts list container
@@ -688,7 +719,9 @@ class ContactInterface(QWidget):
         search_layout.setContentsMargins(20, 15, 20, 15)
 
         self.search_input = FuturisticSearchBar("SEARCH USERNAME...")
-        self.search_input.returnPressed.connect(lambda: asyncio.create_task(self.search_contacts()))
+        self.search_input.returnPressed.connect(
+            lambda: asyncio.create_task(self.search_contacts())
+        )
 
         search_btn = QPushButton("SEARCH")
         search_btn.setFixedSize(80, 40)
@@ -737,8 +770,12 @@ class ContactInterface(QWidget):
                 background-color: #555555;
             }
         """)
-        self.search_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.search_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.search_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.search_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.search_scroll_area.setWidgetResizable(True)
 
         # Search results container
@@ -823,8 +860,12 @@ class ContactInterface(QWidget):
                 background-color: #555555;
             }
         """)
-        self.pending_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.pending_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.pending_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.pending_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.pending_scroll_area.setWidgetResizable(True)
 
         # Pending requests container
@@ -909,8 +950,12 @@ class ContactInterface(QWidget):
                 background-color: #555555;
             }
         """)
-        self.blacklist_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.blacklist_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.blacklist_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.blacklist_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.blacklist_scroll_area.setWidgetResizable(True)
 
         # Blacklist container
@@ -996,8 +1041,7 @@ class ContactInterface(QWidget):
         # Initialize contact manager
         if not self.contact_manager:
             self.contact_manager = ContactManager(
-                self.main_window.app_state,
-                self.main_window.container
+                self.main_window.app_state, self.main_window.container
             )
 
         # Load all data
@@ -1035,7 +1079,9 @@ class ContactInterface(QWidget):
             contact_card = ContactCard(contact, section="contacts")
             contact_card.clicked.connect(self.on_contact_clicked)
             contact_card.action_requested.connect(self.on_contact_action)
-            self.contacts_layout.insertWidget(self.contacts_layout.count() - 1, contact_card)
+            self.contacts_layout.insertWidget(
+                self.contacts_layout.count() - 1, contact_card
+            )
 
         # Update count
         count = len(self.main_window.app_state.accepted_contacts)
@@ -1053,7 +1099,9 @@ class ContactInterface(QWidget):
                 }}
             """)
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.contacts_layout.insertWidget(self.contacts_layout.count() - 1, empty_label)
+            self.contacts_layout.insertWidget(
+                self.contacts_layout.count() - 1, empty_label
+            )
 
     async def load_pending_requests(self):
         """Load pending contact requests"""
@@ -1073,7 +1121,9 @@ class ContactInterface(QWidget):
             for contact in self.pending_requests:
                 contact_card = ContactCard(contact, section="pending")
                 contact_card.action_requested.connect(self.on_contact_action)
-                self.pending_layout.insertWidget(self.pending_layout.count() - 1, contact_card)
+                self.pending_layout.insertWidget(
+                    self.pending_layout.count() - 1, contact_card
+                )
 
             # Update count
             count = len(self.pending_requests)
@@ -1091,7 +1141,9 @@ class ContactInterface(QWidget):
                     }}
                 """)
                 empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.pending_layout.insertWidget(self.pending_layout.count() - 1, empty_label)
+                self.pending_layout.insertWidget(
+                    self.pending_layout.count() - 1, empty_label
+                )
 
         except Exception as e:
             logging.error(f"Error loading pending requests: {e}")
@@ -1114,7 +1166,9 @@ class ContactInterface(QWidget):
             for contact in self.blacklist:
                 contact_card = ContactCard(contact, section="blacklist")
                 contact_card.action_requested.connect(self.on_contact_action)
-                self.blacklist_layout.insertWidget(self.blacklist_layout.count() - 1, contact_card)
+                self.blacklist_layout.insertWidget(
+                    self.blacklist_layout.count() - 1, contact_card
+                )
 
             # Update count
             count = len(self.blacklist)
@@ -1132,7 +1186,9 @@ class ContactInterface(QWidget):
                     }}
                 """)
                 empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.blacklist_layout.insertWidget(self.blacklist_layout.count() - 1, empty_label)
+                self.blacklist_layout.insertWidget(
+                    self.blacklist_layout.count() - 1, empty_label
+                )
 
         except Exception as e:
             logging.error(f"Error loading blacklist: {e}")
@@ -1164,7 +1220,9 @@ class ContactInterface(QWidget):
                 }}
             """)
             loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.search_layout.insertWidget(self.search_layout.count() - 1, loading_label)
+            self.search_layout.insertWidget(
+                self.search_layout.count() - 1, loading_label
+            )
 
             # Perform search
             self.search_results = await self.contact_manager.find_contacts(search_term)
@@ -1184,12 +1242,16 @@ class ContactInterface(QWidget):
                     }}
                 """)
                 empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.search_layout.insertWidget(self.search_layout.count() - 1, empty_label)
+                self.search_layout.insertWidget(
+                    self.search_layout.count() - 1, empty_label
+                )
             else:
                 for contact in self.search_results:
                     contact_card = ContactCard(contact, section="search")
                     contact_card.action_requested.connect(self.on_contact_action)
-                    self.search_layout.insertWidget(self.search_layout.count() - 1, contact_card)
+                    self.search_layout.insertWidget(
+                        self.search_layout.count() - 1, contact_card
+                    )
 
         except Exception as e:
             logging.error(f"Error searching contacts: {e}")
@@ -1237,27 +1299,47 @@ class ContactInterface(QWidget):
 
             if action == "add":
                 success = await self.contact_manager.send_request(contact_id)
-                message = "Contact request sent" if success else "Failed to send request"
+                message = (
+                    "Contact request sent" if success else "Failed to send request"
+                )
                 color = COLOR_SUCCESS if success else COLOR_ERROR
 
             elif action == "accept":
                 success = await self.contact_manager.accept_request(contact_id)
-                message = "Contact request accepted" if success else "Failed to accept request"
+                message = (
+                    "Contact request accepted"
+                    if success
+                    else "Failed to accept request"
+                )
                 color = COLOR_SUCCESS if success else COLOR_ERROR
 
             elif action == "reject":
                 success = await self.contact_manager.reject_request(contact_id)
-                message = "Contact request rejected" if success else "Failed to reject request"
+                message = (
+                    "Contact request rejected"
+                    if success
+                    else "Failed to reject request"
+                )
                 color = COLOR_SUCCESS if success else COLOR_ERROR
 
             elif action == "restore":
-                success = await self.contact_manager.accept_request(contact_id)  # Same as accept for restoration
-                message = "Contact restored from blacklist" if success else "Failed to restore contact"
+                success = await self.contact_manager.accept_request(
+                    contact_id
+                )  # Same as accept for restoration
+                message = (
+                    "Contact restored from blacklist"
+                    if success
+                    else "Failed to restore contact"
+                )
                 color = COLOR_SUCCESS if success else COLOR_ERROR
 
             elif action == "block":
                 success = await self.contact_manager.remove_contact(contact_id)
-                message = "Contact moved to blacklist" if success else "Failed to block contact"
+                message = (
+                    "Contact moved to blacklist"
+                    if success
+                    else "Failed to block contact"
+                )
                 color = COLOR_SUCCESS if success else COLOR_ERROR
 
             # Show status message
@@ -1282,7 +1364,9 @@ class ContactInterface(QWidget):
             success = await self.contact_manager.synchronize_contacts()
 
             if success:
-                self.show_status_message("Contacts synchronized successfully", COLOR_SUCCESS)
+                self.show_status_message(
+                    "Contacts synchronized successfully", COLOR_SUCCESS
+                )
                 await self.load_all_data()
             else:
                 self.show_status_message("Failed to synchronize contacts", COLOR_ERROR)

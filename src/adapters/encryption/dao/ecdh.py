@@ -10,6 +10,7 @@ from typing import Tuple
 
 from src.exceptions import *
 
+
 class AbstractECDHCipher(ABC):
     @abstractmethod
     async def generate_key_pair(self) -> tuple[str, str]:
@@ -21,9 +22,7 @@ class AbstractECDHCipher(ABC):
 
     @abstractmethod
     async def derive_shared_key(
-            self,
-            private_key_pem: str,
-            peer_public_key_pem: str
+        self, private_key_pem: str, peer_public_key_pem: str
     ) -> bytes:
         """
         Derives a shared key using the provided private key and peer's public key
@@ -41,8 +40,7 @@ class X25519Cipher(AbstractECDHCipher):
             return await loop.run_in_executor(None, self._generate_key_pair)
         except Exception as e:
             raise KeyGenerationError(
-                "Failed to generate X25519 ecdh key pair",
-                original_error=e
+                "Failed to generate X25519 ecdh key pair", original_error=e
             ) from e
 
     def _generate_key_pair(self) -> tuple[str, str]:
@@ -51,55 +49,44 @@ class X25519Cipher(AbstractECDHCipher):
         private_pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption()
-        ).decode('utf-8')
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("utf-8")
 
         public_key = private_key.public_key()
         public_pem = public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        ).decode('utf-8')
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("utf-8")
 
         return private_pem, public_pem
 
     async def derive_shared_key(
-            self,
-            private_key_pem: str,
-            peer_public_key_pem: str
+        self, private_key_pem: str, peer_public_key_pem: str
     ) -> bytes:
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
-                None,
-                self._derive_shared_key,
-                private_key_pem,
-                peer_public_key_pem
+                None, self._derive_shared_key, private_key_pem, peer_public_key_pem
             )
         except (ValueError, TypeError) as e:
             raise
         except Exception as e:
             raise CryptographyError(
-                "Failed to derive shared ke",
-                original_error=e
+                "Failed to derive shared ke", original_error=e
             ) from e
 
     def _derive_shared_key(
-            self,
-            private_key_pem: str,
-            peer_public_key_pem: str
+        self, private_key_pem: str, peer_public_key_pem: str
     ) -> bytes:
         if not private_key_pem or not peer_public_key_pem:
             raise ValueError("Keys cannot be empty")
 
         private_key = serialization.load_pem_private_key(
-            private_key_pem.encode(),
-            password=None,
-            backend=default_backend()
+            private_key_pem.encode(), password=None, backend=default_backend()
         )
 
         peer_public_key = serialization.load_pem_public_key(
-            peer_public_key_pem.encode(),
-            backend=default_backend()
+            peer_public_key_pem.encode(), backend=default_backend()
         )
 
         if not isinstance(private_key, x25519.X25519PrivateKey):
@@ -114,8 +101,8 @@ class X25519Cipher(AbstractECDHCipher):
             algorithm=hashes.SHA512(),
             length=32,
             salt=None,
-            info=b'apata_messenger_x25519',
-            backend=default_backend()
+            info=b"apata_messenger_x25519",
+            backend=default_backend(),
         ).derive(shared_secret)
 
         return derived_key

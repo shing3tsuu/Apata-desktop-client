@@ -33,7 +33,7 @@ async def test_password_hashing_and_verification():
 
         assert is_valid == True
         assert hashed_password != password  # Hash should be different from plain text
-        assert hashed_password.startswith(('$2a$', '$2b$', '$2y$'))  # Bcrypt format
+        assert hashed_password.startswith(("$2a$", "$2b$", "$2y$"))  # Bcrypt format
         assert len(hashed_password) == 60  # Bcrypt hash length
     finally:
         await close_container(container)
@@ -107,7 +107,9 @@ async def test_short_password():
     try:
         short_password = "123"  # Less than minimum 8 characters
 
-        with pytest.raises(ValueError, match="Password must be at least 8 characters long"):
+        with pytest.raises(
+            ValueError, match="Password must be at least 8 characters long"
+        ):
             await hasher.hashing(short_password)
     finally:
         await close_container(container)
@@ -226,8 +228,7 @@ async def test_concurrent_hashing():
 
         # Verify all hashes concurrently
         verification_tasks = [
-            hasher.compare(passwords[i], hashes[i])
-            for i in range(len(passwords))
+            hasher.compare(passwords[i], hashes[i]) for i in range(len(passwords))
         ]
         results = await asyncio.gather(*verification_tasks)
 
@@ -256,8 +257,12 @@ async def test_is_valid_hash_method():
         assert hasher._is_valid_hash("") == False
         assert hasher._is_valid_hash("invalid_hash") == False
         assert hasher._is_valid_hash("$2a$12$tooshort") == False
-        assert hasher._is_valid_hash(
-            "$2x$12$invalidprefixK3C8hN5u9Qk7z2v1wY6ZceBp1jH4dE7fG8i9l0m1n2o3p4q5r6s7t8u9v0") == False
+        assert (
+            hasher._is_valid_hash(
+                "$2x$12$invalidprefixK3C8hN5u9Qk7z2v1wY6ZceBp1jH4dE7fG8i9l0m1n2o3p4q5r6s7t8u9v0"
+            )
+            == False
+        )
     finally:
         await close_container(container)
 

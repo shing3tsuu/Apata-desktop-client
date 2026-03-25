@@ -45,13 +45,17 @@ async def test_encrypt_decrypt_with_master_key():
         test_data = b"Test data for encryption and decryption"
 
         # Encrypt data
-        encrypted_data = await key_manager.encrypt_with_master_key(test_data, master_key)
+        encrypted_data = await key_manager.encrypt_with_master_key(
+            test_data, master_key
+        )
 
         assert encrypted_data is not None
         assert len(encrypted_data) > len(test_data)  # Should include nonce and tag
 
         # Decrypt data
-        decrypted_data = await key_manager.decrypt_with_master_key(encrypted_data, master_key)
+        decrypted_data = await key_manager.decrypt_with_master_key(
+            encrypted_data, master_key
+        )
 
         assert decrypted_data == test_data
     finally:
@@ -71,7 +75,9 @@ async def test_encrypt_decrypt_master_key_with_password():
         password = "MySecurePassword123!"
 
         # Encrypt master key
-        encrypted_master_key, salt = await key_manager.encrypt_master_key(master_key, password)
+        encrypted_master_key, salt = await key_manager.encrypt_master_key(
+            master_key, password
+        )
 
         assert encrypted_master_key is not None
         assert salt is not None
@@ -79,7 +85,9 @@ async def test_encrypt_decrypt_master_key_with_password():
         assert len(encrypted_master_key) == 60  # 12 nonce + 16 tag + 32 ciphertext
 
         # Decrypt master key
-        decrypted_master_key = await key_manager.decrypt_master_key(encrypted_master_key, password, salt)
+        decrypted_master_key = await key_manager.decrypt_master_key(
+            encrypted_master_key, password, salt
+        )
 
         assert decrypted_master_key == master_key
     finally:
@@ -100,10 +108,14 @@ async def test_decrypt_master_key_with_wrong_password():
         wrong_password = "WrongPassword456!"
 
         # Encrypt master key
-        encrypted_master_key, salt = await key_manager.encrypt_master_key(master_key, password)
+        encrypted_master_key, salt = await key_manager.encrypt_master_key(
+            master_key, password
+        )
 
         # Try to decrypt with wrong password
-        decrypted_master_key = await key_manager.decrypt_master_key(encrypted_master_key, wrong_password, salt)
+        decrypted_master_key = await key_manager.decrypt_master_key(
+            encrypted_master_key, wrong_password, salt
+        )
 
         assert decrypted_master_key is None
     finally:
@@ -121,13 +133,17 @@ async def test_encrypt_decrypt_private_key_legacy():
         password = "LegacyPassword123!"
 
         # Encrypt private key
-        encrypted_private_key = await key_manager.encrypt_private_key(private_key_data, password)
+        encrypted_private_key = await key_manager.encrypt_private_key(
+            private_key_data, password
+        )
 
         assert encrypted_private_key is not None
         assert len(encrypted_private_key) > len(private_key_data)
 
         # Decrypt private key
-        decrypted_private_key = await key_manager.decrypt_private_key(encrypted_private_key, password)
+        decrypted_private_key = await key_manager.decrypt_private_key(
+            encrypted_private_key, password
+        )
 
         assert decrypted_private_key == private_key_data
     finally:
@@ -146,10 +162,14 @@ async def test_decrypt_private_key_with_wrong_password():
         wrong_password = "WrongPassword456!"
 
         # Encrypt private key
-        encrypted_private_key = await key_manager.encrypt_private_key(private_key_data, password)
+        encrypted_private_key = await key_manager.encrypt_private_key(
+            private_key_data, password
+        )
 
         # Try to decrypt with wrong password
-        decrypted_private_key = await key_manager.decrypt_private_key(encrypted_private_key, wrong_password)
+        decrypted_private_key = await key_manager.decrypt_private_key(
+            encrypted_private_key, wrong_password
+        )
 
         assert decrypted_private_key is None
     finally:
@@ -188,6 +208,7 @@ async def test_derive_key_from_password():
     finally:
         await close_container(container)
 
+
 @pytest.mark.asyncio
 async def test_derive_key_with_custom_iterations():
     """Test key derivation with custom iterations"""
@@ -199,7 +220,9 @@ async def test_derive_key_with_custom_iterations():
         custom_iterations = 100000
 
         # Derive key with custom iterations
-        derived_key = key_manager.derive_key_from_password(password, salt, iterations=custom_iterations)
+        derived_key = key_manager.derive_key_from_password(
+            password, salt, iterations=custom_iterations
+        )
 
         assert derived_key is not None
         assert len(derived_key) == 32
@@ -217,7 +240,9 @@ async def test_encrypt_with_invalid_master_key():
         invalid_master_key = b"invalid_key"  # Wrong length
 
         # Should handle invalid key gracefully
-        encrypted_data = await key_manager.encrypt_with_master_key(test_data, invalid_master_key)
+        encrypted_data = await key_manager.encrypt_with_master_key(
+            test_data, invalid_master_key
+        )
 
         assert encrypted_data is None
     finally:
@@ -235,7 +260,9 @@ async def test_decrypt_with_invalid_data():
         # Invalid encrypted data (too short)
         invalid_encrypted_data = b"short"
 
-        decrypted_data = await key_manager.decrypt_with_master_key(invalid_encrypted_data, master_key)
+        decrypted_data = await key_manager.decrypt_with_master_key(
+            invalid_encrypted_data, master_key
+        )
 
         assert decrypted_data is None
     finally:
@@ -252,14 +279,18 @@ async def test_decrypt_with_tampered_data():
         test_data = b"Test data"
 
         # Encrypt data
-        encrypted_data = await key_manager.encrypt_with_master_key(test_data, master_key)
+        encrypted_data = await key_manager.encrypt_with_master_key(
+            test_data, master_key
+        )
 
         # Tamper the data
         tampered_data = bytearray(encrypted_data)
         tampered_data[10] ^= 0x01  # Flip one bit
 
         # Should fail to decrypt
-        decrypted_data = await key_manager.decrypt_with_master_key(bytes(tampered_data), master_key)
+        decrypted_data = await key_manager.decrypt_with_master_key(
+            bytes(tampered_data), master_key
+        )
 
         assert decrypted_data is None
     finally:
@@ -276,12 +307,16 @@ async def test_empty_data_encryption():
         empty_data = b""
 
         # Encrypt empty data
-        encrypted_data = await key_manager.encrypt_with_master_key(empty_data, master_key)
+        encrypted_data = await key_manager.encrypt_with_master_key(
+            empty_data, master_key
+        )
 
         assert encrypted_data is not None
 
         # Decrypt empty data
-        decrypted_data = await key_manager.decrypt_with_master_key(encrypted_data, master_key)
+        decrypted_data = await key_manager.decrypt_with_master_key(
+            encrypted_data, master_key
+        )
 
         assert decrypted_data == empty_data
     finally:
@@ -298,12 +333,16 @@ async def test_large_data_encryption():
         large_data = b"X" * 100000  # 100KB of data
 
         # Encrypt large data
-        encrypted_data = await key_manager.encrypt_with_master_key(large_data, master_key)
+        encrypted_data = await key_manager.encrypt_with_master_key(
+            large_data, master_key
+        )
 
         assert encrypted_data is not None
 
         # Decrypt large data
-        decrypted_data = await key_manager.decrypt_with_master_key(encrypted_data, master_key)
+        decrypted_data = await key_manager.decrypt_with_master_key(
+            encrypted_data, master_key
+        )
 
         assert decrypted_data == large_data
     finally:
@@ -350,7 +389,10 @@ async def test_concurrent_operations():
         encrypted_master_results = await asyncio.gather(*encrypt_master_tasks)
 
         # All encryptions should succeed
-        assert all(result[0] is not None and result[1] is not None for result in encrypted_master_results)
+        assert all(
+            result[0] is not None and result[1] is not None
+            for result in encrypted_master_results
+        )
     finally:
         await close_container(container)
 

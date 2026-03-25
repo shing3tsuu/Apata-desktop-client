@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QLineEdit
 from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QFont
 from PyQt6.QtCore import Qt, QTimer
 
+
 class LoginField(QLineEdit):
     def __init__(
         self,
@@ -9,7 +10,7 @@ class LoginField(QLineEdit):
         color_primary: str,
         color_secondary: str,
         is_password: bool = False,
-        parent=None
+        parent=None,
     ):
         super().__init__(parent)
         self.color_primary = color_primary
@@ -91,9 +92,18 @@ class LoginField(QLineEdit):
             return
 
         ratio = self.current_step / self.steps
-        r = int(self.start_color.red() + (self.end_color.red() - self.start_color.red()) * ratio)
-        g = int(self.start_color.green() + (self.end_color.green() - self.start_color.green()) * ratio)
-        b = int(self.start_color.blue() + (self.end_color.blue() - self.start_color.blue()) * ratio)
+        r = int(
+            self.start_color.red()
+            + (self.end_color.red() - self.start_color.red()) * ratio
+        )
+        g = int(
+            self.start_color.green()
+            + (self.end_color.green() - self.start_color.green()) * ratio
+        )
+        b = int(
+            self.start_color.blue()
+            + (self.end_color.blue() - self.start_color.blue()) * ratio
+        )
 
         self.current_border_color = QColor(r, g, b).name()
         self.update()

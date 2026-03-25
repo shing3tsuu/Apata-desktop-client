@@ -2,13 +2,19 @@ import logging
 
 from ..dao.local_user import AbstractLocalUserDAO
 from ..dao.common import AbstractCommonDAO, CommonDAO, error_handler
-from src.adapters.database.dto import LocalUserDTO, LocalUserRequestDTO, UpdateLocalUserRequestDTO
+from src.adapters.database.dto import (
+    LocalUserDTO,
+    LocalUserRequestDTO,
+    UpdateLocalUserRequestDTO,
+)
+
 
 class LocalUserService:
-    def __init__(self, local_user_dao: AbstractLocalUserDAO, common_dao: AbstractCommonDAO, logger: logging.Logger):
+    def __init__(
+        self, local_user_dao: AbstractLocalUserDAO, common_dao: AbstractCommonDAO
+    ):
         self._local_user_dao = local_user_dao
         self._common_dao = common_dao
-        self._logger = logger
 
     @error_handler
     async def add_user(self, user: LocalUserRequestDTO) -> LocalUserDTO:
@@ -20,7 +26,9 @@ class LocalUserService:
         return await self._local_user_dao.get_user_data(user)
 
     @error_handler
-    async def update_user_data(self, user: UpdateLocalUserRequestDTO) -> LocalUserDTO | None:
+    async def update_user_data(
+        self, user: UpdateLocalUserRequestDTO
+    ) -> LocalUserDTO | None:
         result = await self._local_user_dao.update_user_data(user)
         return result
 

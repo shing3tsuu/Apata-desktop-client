@@ -21,6 +21,7 @@ test_password = f"test_password_{random.randint(0, 100000)}"
 
 class TestContact:
     __test__ = False
+
     def __init__(self, user_1_state: AppState, user_2_state: AppState, container):
         self._state = app_state
         self._container = container
@@ -34,23 +35,29 @@ class TestContact:
             auth_http_service = await request_container.get(AuthHTTPService)
             local_user_service = await request_container.get(LocalUserService)
 
-            user_1_register_data = await auth_http_service.register(username=test_user_1)
+            user_1_register_data = await auth_http_service.register(
+                username=test_user_1
+            )
             user_1_login_data = await auth_http_service.login(
                 username=test_sender,
-                ecdsa_private_key=user_1_register_data["ecdsa_private_key"]
+                ecdsa_private_key=user_1_register_data["ecdsa_private_key"],
             )
             user_1_data = await auth_http_service.get_current_user_info()
 
-            hashed_password = await (await request_container.get(AbstractPasswordHasher)).hashing(test_password)
+            hashed_password = await (
+                await request_container.get(AbstractPasswordHasher)
+            ).hashing(test_password)
             await local_user_service.add_user(
                 LocalUserRequestDTO(
                     server_user_id=user_1_data["id"],
                     username=test_user_1,
-                    hashed_password=hashed_password
+                    hashed_password=hashed_password,
                 )
             )
 
-            local_user_1 = await local_user_service.get_user_data(LocalUserRequestDTO(username=test_user_1))
+            local_user_1 = await local_user_service.get_user_data(
+                LocalUserRequestDTO(username=test_user_1)
+            )
             data = await auth_http_service.get_public_keys(user_1_data["id"])
             self._test_user_1_state.update_from_login(
                 username=test_user_1,
@@ -64,10 +71,12 @@ class TestContact:
                 token=sender_login_data["access_token"],
             )
 
-            receiver_register_data = await auth_http_service.register(username=test_receiver)
+            receiver_register_data = await auth_http_service.register(
+                username=test_receiver
+            )
             receiver_login_data = await auth_http_service.login(
                 username=test_receiver,
-                ecdsa_private_key=receiver_register_data["ecdsa_private_key"]
+                ecdsa_private_key=receiver_register_data["ecdsa_private_key"],
             )
             receiver_user_data = await auth_http_service.get_current_user_info()
 
@@ -75,11 +84,13 @@ class TestContact:
                 LocalUserRequestDTO(
                     server_user_id=receiver_user_data["id"],
                     username=test_receiver,
-                    hashed_password=hashed_password
+                    hashed_password=hashed_password,
                 )
             )
 
-            local_receiver_user = await local_user_service.get_user_data(LocalUserRequestDTO(username=test_receiver))
+            local_receiver_user = await local_user_service.get_user_data(
+                LocalUserRequestDTO(username=test_receiver)
+            )
             data = await auth_http_service.get_public_keys(receiver_user_data["id"])
             self._receiver_state.update_from_login(
                 username=test_receiver,

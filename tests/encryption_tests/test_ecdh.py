@@ -74,10 +74,10 @@ async def test_key_serialization_deserialization():
         private_pem, public_pem = await cipher.generate_key_pair()
 
         # Verify PEM format
-        assert private_pem.startswith('-----BEGIN PRIVATE KEY-----')
-        assert private_pem.endswith('-----END PRIVATE KEY-----\n')
-        assert public_pem.startswith('-----BEGIN PUBLIC KEY-----')
-        assert public_pem.endswith('-----END PUBLIC KEY-----\n')
+        assert private_pem.startswith("-----BEGIN PRIVATE KEY-----")
+        assert private_pem.endswith("-----END PRIVATE KEY-----\n")
+        assert public_pem.startswith("-----BEGIN PUBLIC KEY-----")
+        assert public_pem.endswith("-----END PUBLIC KEY-----\n")
 
         # Test that we can use the serialized keys for key exchange
         private2, public2 = await cipher.generate_key_pair()

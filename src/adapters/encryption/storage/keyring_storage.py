@@ -9,11 +9,7 @@ from src.adapters.encryption.service import KeyManager
 
 
 class EncryptedKeyStorage:
-    def __init__(
-            self,
-            key_manager: KeyManager,
-            logger: logging.Logger | None = None
-    ):
+    def __init__(self, key_manager: KeyManager, logger: logging.Logger | None = None):
         self.key_manager = key_manager
         self.logger = logger or logging.getLogger(__name__)
 
@@ -52,7 +48,9 @@ class EncryptedKeyStorage:
 
             encrypted_master_key, salt = result
 
-            combined_data = base64.b64encode(salt + encrypted_master_key).decode('utf-8')
+            combined_data = base64.b64encode(salt + encrypted_master_key).decode(
+                "utf-8"
+            )
             keyring.set_password(self.MASTER_KEY_SERVICE, username, combined_data)
 
             self.logger.info(f"Master key registered for user: {username}")
@@ -98,7 +96,9 @@ class EncryptedKeyStorage:
             self.logger.error(f"Unexpected error getting master key: {e}")
             return None
 
-    async def store_ecdh_private_key(self, username: str, ecdh_private_key: str, password: str) -> bool:
+    async def store_ecdh_private_key(
+        self, username: str, ecdh_private_key: str, password: str
+    ) -> bool:
         if not username or not ecdh_private_key or not password:
             self.logger.error("Missing required parameters for storing ECDH key")
             return False
@@ -110,7 +110,7 @@ class EncryptedKeyStorage:
                 return False
 
             encrypted_ecdh = await self.key_manager.encrypt_with_master_key(
-                ecdh_private_key.encode('utf-8'), master_key
+                ecdh_private_key.encode("utf-8"), master_key
             )
 
             if not encrypted_ecdh:
@@ -120,7 +120,7 @@ class EncryptedKeyStorage:
             keyring.set_password(
                 self.ECDH_KEY_SERVICE,
                 username,
-                base64.b64encode(encrypted_ecdh).decode('utf-8')
+                base64.b64encode(encrypted_ecdh).decode("utf-8"),
             )
 
             self.logger.info(f"ECDH private key stored for user: {username}")
@@ -129,7 +129,9 @@ class EncryptedKeyStorage:
             self.logger.error(f"Failed to store ECDH private key: {e}")
             return False
 
-    async def store_ecdsa_private_key(self, username: str, password: str, private_key_pem: str) -> bool:
+    async def store_ecdsa_private_key(
+        self, username: str, password: str, private_key_pem: str
+    ) -> bool:
         if not username or not private_key_pem or not password:
             self.logger.error("Missing required parameters for storing ECDSA key")
             return False
@@ -141,7 +143,7 @@ class EncryptedKeyStorage:
                 return False
 
             encrypted_ecdsa = await self.key_manager.encrypt_with_master_key(
-                private_key_pem.encode('utf-8'), master_key
+                private_key_pem.encode("utf-8"), master_key
             )
 
             if not encrypted_ecdsa:
@@ -151,7 +153,7 @@ class EncryptedKeyStorage:
             keyring.set_password(
                 self.ECDSA_KEY_SERVICE,
                 username,
-                base64.b64encode(encrypted_ecdsa).decode('utf-8')
+                base64.b64encode(encrypted_ecdsa).decode("utf-8"),
             )
 
             self.logger.info(f"ECDSA private key stored for user: {username}")
@@ -184,7 +186,7 @@ class EncryptedKeyStorage:
                 self.logger.error("Failed to decrypt ECDH private key")
                 return None
 
-            return decrypted_ecdh.decode('utf-8')
+            return decrypted_ecdh.decode("utf-8")
         except Exception as e:
             self.logger.error(f"Failed to get ECDH private key: {e}")
             return None
@@ -213,7 +215,7 @@ class EncryptedKeyStorage:
                 self.logger.error("Failed to decrypt ECDSA private key")
                 return None
 
-            return decrypted_ecdsa.decode('utf-8')
+            return decrypted_ecdsa.decode("utf-8")
         except Exception as e:
             self.logger.error(f"Failed to get ECDSA private key: {e}")
             return None
@@ -239,12 +241,18 @@ class EncryptedKeyStorage:
 
         try:
             success = True
-            for service in [self.MASTER_KEY_SERVICE, self.ECDH_KEY_SERVICE, self.ECDSA_KEY_SERVICE]:
+            for service in [
+                self.MASTER_KEY_SERVICE,
+                self.ECDH_KEY_SERVICE,
+                self.ECDSA_KEY_SERVICE,
+            ]:
                 try:
                     keyring.delete_password(service, username)
                 except KeyringError:
                     success = False
-                    self.logger.warning(f"Failed to delete password for service: {service}")
+                    self.logger.warning(
+                        f"Failed to delete password for service: {service}"
+                    )
             return success
         except Exception as e:
             self.logger.error(f"Failed to clear storage: {e}")

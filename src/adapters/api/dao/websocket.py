@@ -6,9 +6,12 @@ import websockets
 from src.exceptions import NetworkError, APIError
 import ssl
 
+
 class WebSocketDAO:
-    def __init__(self, base_ws_url: str, logger: logging.Logger = None, verify: bool = False):
-        self.base_ws_url = base_ws_url.rstrip('/')
+    def __init__(
+        self, base_ws_url: str, logger: logging.Logger = None, verify: bool = False
+    ):
+        self.base_ws_url = base_ws_url.rstrip("/")
         self.verify = verify
 
         self._logger = logger or logging.getLogger(__name__)
@@ -40,7 +43,7 @@ class WebSocketDAO:
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=10,
-                ssl=ssl_context if ssl_context else True
+                ssl=ssl_context if ssl_context else True,
             )
             self._is_connected = True
             self._reconnect_delay = 1

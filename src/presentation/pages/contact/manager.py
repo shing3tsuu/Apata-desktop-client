@@ -13,24 +13,28 @@ from src.presentation.pages import AppState, Contact, Message
 from src.adapters.api.service import (
     AuthHTTPService,
     ContactHTTPService,
-    MessageHTTPService
+    MessageHTTPService,
 )
 from src.adapters.database.service import (
     LocalUserService,
     ContactService,
-    MessageService
+    MessageService,
 )
 from src.adapters.database.dto import (
-    LocalUserRequestDTO, LocalUserDTO,
-    ContactRequestDTO, ContactDTO,
-    MessageRequestDTO, MessageDTO
+    LocalUserRequestDTO,
+    LocalUserDTO,
+    ContactRequestDTO,
+    ContactDTO,
+    MessageRequestDTO,
+    MessageDTO,
 )
 from src.adapters.encryption.dao import (
     Abstract256Cipher,
     AbstractPasswordHasher,
-    AbstractECDHCipher
+    AbstractECDHCipher,
 )
 from src.adapters.encryption.storage import EncryptedKeyStorage
+
 
 class ContactManager:
     def __init__(self, app_state: AppState, container: AsyncContainer):
@@ -54,7 +58,8 @@ class ContactManager:
                         ecdh_public_key=contact.get("ecdh_public_key", None),
                         last_seen=contact.get("last_seen", None),
                         online=contact.get("online", None),
-                    ) for contact in contacts
+                    )
+                    for contact in contacts
                 ]
         except Exception as e:
             self._logger.error("Error searching contacts: %s", e)
@@ -69,23 +74,25 @@ class ContactManager:
 
                 contacts = await contact_service.get_contacts(self._state.local_user_id)
                 if contact_id in [c.server_user_id for c in contacts]:
-                    raise ContactAlreadyExistsError(f"Contact with id {contact_id} already exists")
+                    raise ContactAlreadyExistsError(
+                        f"Contact with id {contact_id} already exists"
+                    )
 
                 self._logger.info(f"Sending request to contact with id: {contact_id}")
 
                 request = await contact_http_service.send_contact_request(
                     receiver_id=contact_id
                 )
-                if request.get('id') == contact_id:
+                if request.get("id") == contact_id:
                     result = await contact_service.add_contact(
                         ContactRequestDTO(
                             local_user_id=self._state.local_user_id,
-                            server_user_id=request['id'],
-                            status=request['status'],
-                            username=request['username'],
-                            ecdh_public_key=request['ecdh_public_key'],
-                            last_seen=request['last_seen'],
-                            online=request['online'],
+                            server_user_id=request["id"],
+                            status=request["status"],
+                            username=request["username"],
+                            ecdh_public_key=request["ecdh_public_key"],
+                            last_seen=request["last_seen"],
+                            online=request["online"],
                         )
                     )
                     if result.id:
@@ -93,10 +100,14 @@ class ContactManager:
                     else:
                         return False
                 else:
-                    self._logger.error(f"Error sending request to contact with id: {contact_id}")
+                    self._logger.error(
+                        f"Error sending request to contact with id: {contact_id}"
+                    )
                     return False
         except Exception as e:
-            self._logger.error(f"Error sending request to contact with id: {contact_id}, error: {e}")
+            self._logger.error(
+                f"Error sending request to contact with id: {contact_id}, error: {e}"
+            )
             return False
 
     async def accept_request(self, contact_id: int) -> bool:
@@ -123,10 +134,14 @@ class ContactManager:
                     else:
                         return False
                 else:
-                    self._logger.error(f"Error accepted request to contact with id: {contact_id}")
+                    self._logger.error(
+                        f"Error accepted request to contact with id: {contact_id}"
+                    )
                     return False
         except Exception as e:
-            self._logger.error(f"Error accepting request from contact with id: {contact_id}, error: {e}")
+            self._logger.error(
+                f"Error accepting request from contact with id: {contact_id}, error: {e}"
+            )
             return False
 
     async def reject_request(self, contact_id: int) -> bool:
@@ -153,10 +168,14 @@ class ContactManager:
                     else:
                         return False
                 else:
-                    self._logger.error(f"Error rejecting request to contact with id: {contact_id}")
+                    self._logger.error(
+                        f"Error rejecting request to contact with id: {contact_id}"
+                    )
                     return False
         except Exception as e:
-            self._logger.error(f"Error rejecting request from contact with id: {contact_id}, error: {e}")
+            self._logger.error(
+                f"Error rejecting request from contact with id: {contact_id}, error: {e}"
+            )
             return False
 
     async def get_pending_requests(self) -> list[Contact]:
@@ -167,7 +186,9 @@ class ContactManager:
                 contact_service = await request_container.get(ContactService)
 
                 contacts = await contact_service.get_contacts(self._state.local_user_id)
-                pending_contacts = [c for c in contacts if getattr(c, 'status', None) == 'pending']
+                pending_contacts = [
+                    c for c in contacts if getattr(c, "status", None) == "pending"
+                ]
 
                 return [
                     Contact(
@@ -176,8 +197,9 @@ class ContactManager:
                         ecdh_public_key=contact.ecdh_public_key,
                         last_seen=contact.last_seen,
                         online=contact.online,
-                        status="pending"
-                    ) for contact in pending_contacts
+                        status="pending",
+                    )
+                    for contact in pending_contacts
                 ]
         except Exception as e:
             self._logger.error(f"Error getting pending requests: {e}")
@@ -189,7 +211,9 @@ class ContactManager:
                 contact_service = await request_container.get(ContactService)
 
                 contacts = await contact_service.get_contacts(self._state.local_user_id)
-                rejected_contacts = [c for c in contacts if getattr(c, 'status', None) == 'rejected']
+                rejected_contacts = [
+                    c for c in contacts if getattr(c, "status", None) == "rejected"
+                ]
 
                 return [
                     Contact(
@@ -198,8 +222,9 @@ class ContactManager:
                         ecdh_public_key=contact.ecdh_public_key,
                         last_seen=contact.last_seen,
                         online=contact.online,
-                        status="rejected"
-                    ) for contact in rejected_contacts
+                        status="rejected",
+                    )
+                    for contact in rejected_contacts
                 ]
         except Exception as e:
             self._logger.error(f"Error getting blacklist: {e}")
@@ -220,7 +245,7 @@ class ContactManager:
                         ContactRequestDTO(
                             local_user_id=self._state.local_user_id,
                             contact_id=contact_id,
-                            status="rejected"
+                            status="rejected",
                         )
                     )
                     return True
@@ -239,7 +264,9 @@ class ContactManager:
                 self._logger.info("Starting contact synchronization...")
 
                 # Get all contacts from server with complete information
-                server_contacts = await contact_http_service.get_contacts(server_user_id=self._state.server_user_id)
+                server_contacts = await contact_http_service.get_contacts(
+                    server_user_id=self._state.server_user_id
+                )
                 if not server_contacts:
                     self._logger.info("No contacts found on server")
                     return True, "No contacts found on server"
@@ -247,7 +274,9 @@ class ContactManager:
                 local_contacts = await contact_service.get_contacts(
                     local_user_id=self._state.local_user_id
                 )
-                local_contact_map = {contact.server_user_id: contact for contact in local_contacts}
+                local_contact_map = {
+                    contact.server_user_id: contact for contact in local_contacts
+                }
                 # Process each server contact
                 for server_contact in server_contacts:
                     self._state.clear_contacts()
@@ -258,7 +287,7 @@ class ContactManager:
                             ecdh_public_key=server_contact.ecdh_public_key,
                             last_seen=server_contact.last_seen,
                             online=server_contact.online,
-                            status=server_contact.status
+                            status=server_contact.status,
                         )
                     )
                     local_contact = local_contact_map.get(server_contact.server_user_id)
@@ -272,7 +301,7 @@ class ContactManager:
                                 ecdh_public_key=server_contact.ecdh_public_key,
                                 status=server_contact.status,
                                 last_seen=server_contact.last_seen,
-                                online=server_contact.online
+                                online=server_contact.online,
                             )
                         )
                         self._logger.info(f"Updated contact: {server_contact.username}")
@@ -286,19 +315,27 @@ class ContactManager:
                                 ecdh_public_key=server_contact.ecdh_public_key,
                                 status=server_contact.status,
                                 last_seen=server_contact.last_seen,
-                                online=server_contact.online
+                                online=server_contact.online,
                             )
                         )
-                        self._logger.info(f"Added new contact: {server_contact.username}")
+                        self._logger.info(
+                            f"Added new contact: {server_contact.username}"
+                        )
 
                 # Remove local contacts that no longer exist on server
-                server_contact_ids = {contact.server_user_id for contact in server_contacts}
+                server_contact_ids = {
+                    contact.server_user_id for contact in server_contacts
+                }
                 for local_contact in local_contacts:
                     if local_contact.server_user_id not in server_contact_ids:
                         await contact_service.delete_contact(local_contact.id)
-                        self._logger.info(f"Removed local contact: {local_contact.username}")
+                        self._logger.info(
+                            f"Removed local contact: {local_contact.username}"
+                        )
 
-                self._logger.info(f"Successfully synchronized {len(server_contacts)} contacts")
+                self._logger.info(
+                    f"Successfully synchronized {len(server_contacts)} contacts"
+                )
                 return True
 
         except Exception as e:

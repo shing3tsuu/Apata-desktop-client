@@ -17,6 +17,7 @@ from src.presentation.pages import AppState
 
 from src.providers import AppProvider
 
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -67,7 +68,7 @@ class MainWindow(QMainWindow):
 
         screen = self.screens[screen_name]
 
-        if hasattr(screen, 'prepare_screen'):
+        if hasattr(screen, "prepare_screen"):
             await screen.prepare_screen(**kwargs)
 
         self.screen_stack.setCurrentWidget(screen)
@@ -101,7 +102,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        force=True
+        force=True,
     )
 
     try:

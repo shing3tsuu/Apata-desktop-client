@@ -2,16 +2,21 @@ from typing import Any
 import base64
 import logging
 
-from src.adapters.encryption.dao import Abstract256Cipher, AbstractECDHCipher, AbstractECDSASignature
+from src.adapters.encryption.dao import (
+    Abstract256Cipher,
+    AbstractECDHCipher,
+    AbstractECDSASignature,
+)
 from src.exceptions import *
+
 
 class EncryptionService:
     def __init__(
-            self,
-            aes_cipher: Abstract256Cipher,
-            ecdh_cipher: AbstractECDHCipher,
-            ecdsa_signer: AbstractECDSASignature,
-            logger: logging.Logger
+        self,
+        aes_cipher: Abstract256Cipher,
+        ecdh_cipher: AbstractECDHCipher,
+        ecdsa_signer: AbstractECDSASignature,
+        logger: logging.Logger,
     ):
         self._aes_cipher = aes_cipher
         self._ecdh_cipher = ecdh_cipher
@@ -19,14 +24,14 @@ class EncryptionService:
         self._logger = logger
 
     async def encrypt_message(
-            self,
-            message: str,
-            sender_ecdsa_private_key: str,
-            recipient_ecdsa_public_key: str,
-            ephemeral_ecdh_private_key: str,
-            ephemeral_ecdh_public_key: str,
-            recipient_ecdh_public_key: str,
-            recipient_ecdh_signature
+        self,
+        message: str,
+        sender_ecdsa_private_key: str,
+        recipient_ecdsa_public_key: str,
+        ephemeral_ecdh_private_key: str,
+        ephemeral_ecdh_public_key: str,
+        recipient_ecdh_public_key: str,
+        recipient_ecdh_signature: str,
     ) -> tuple[str, str]:
         """
         Encrypts a message.
@@ -52,15 +57,13 @@ class EncryptionService:
 
         self._logger.debug(
             f"Starting encryption message: {message[:50]}",
-            extra={
-                "recipient_key_present": bool(recipient_ecdh_public_key)
-            }
+            extra={"recipient_key_present": bool(recipient_ecdh_public_key)},
         )
 
         is_signature_valid = await self._ecdsa_signer.verify_signature(
             public_key_pem=recipient_ecdsa_public_key,
             message=recipient_ecdh_public_key,
-            signature=recipient_ecdh_signature
+            signature=recipient_ecdh_signature,
         )
 
         if not is_signature_valid:
@@ -72,25 +75,24 @@ class EncryptionService:
         try:
             ephemeral_signature = await self._ecdsa_signer.sign_string(
                 private_key_pem=sender_ecdsa_private_key,
-                string=ephemeral_ecdh_public_key
+                string=ephemeral_ecdh_public_key,
             )
 
             shared_key = await self._ecdh_cipher.derive_shared_key(
                 private_key_pem=ephemeral_ecdh_private_key,
-                peer_public_key_pem=recipient_ecdh_public_key
+                peer_public_key_pem=recipient_ecdh_public_key,
             )
 
             encrypted_message = await self._aes_cipher.encrypt(
-                plaintext=message,
-                key=shared_key
+                plaintext=message, key=shared_key
             )
 
             self._logger.info(
                 f"Message: ({message[:50]}) encryption successful",
                 extra={
                     "message_id": self._generate_message_id(),
-                    "encrypted_size": len(encrypted_message)
-                }
+                    "encrypted_size": len(encrypted_message),
+                },
             )
 
             return encrypted_message, ephemeral_signature
@@ -103,23 +105,22 @@ class EncryptionService:
                 "Unexpected error during encryption in service layer",
                 extra={
                     "error_type": e.__class__.__name__,
-                    "message_preview": message[:50] if message else ""
+                    "message_preview": message[:50] if message else "",
                 },
-                exc_info=True
+                exc_info=True,
             )
 
             raise InfrastructureError(
-                "Message encryption failed due to technical issue",
-                original_error=e
+                "Message encryption failed due to technical issue", original_error=e
             ) from e
 
     async def decrypt_message(
-            self,
-            encrypted_message: str,
-            sender_ecdsa_public_key: str,
-            recipient_ecdh_private_key: str,
-            ephemeral_ecdh_public_key: str,
-            ephemeral_signature: str,
+        self,
+        encrypted_message: str,
+        sender_ecdsa_public_key: str,
+        recipient_ecdh_private_key: str,
+        ephemeral_ecdh_public_key: str,
+        ephemeral_signature: str,
     ) -> str:
         """
         Decrypts a message.
@@ -138,15 +139,13 @@ class EncryptionService:
 
         self._logger.debug(
             f"Starting decryption message: {message[:50]}",
-            extra={
-                "recipient_key_present": bool(recipient_ecdh_public_key)
-            }
+            extra={"recipient_key_present": bool(recipient_ecdh_public_key)},
         )
 
         is_signature_valid = await self._ecdsa_signer.verify_signature(
             public_key_pem=sender_ecdsa_public_key,
             message=ephemeral_ecdh_public_key,
-            signature=ephemeral_signature
+            signature=ephemeral_signature,
         )
 
         if not is_signature_valid:
@@ -158,20 +157,23 @@ class EncryptionService:
         try:
             shared_key = await self._ecdh_cipher.derive_shared_key(
                 private_key_pem=recipient_ecdh_private_key,
-                peer_public_key_pem=ephemeral_ecdh_public_key
+                peer_public_key_pem=ephemeral_ecdh_public_key,
             )
 
             decrypted_message = await self._aes_cipher.decrypt(
-                ciphertext=encrypted_message,
-                key=shared_key
+                ciphertext=encrypted_message, key=shared_key
             )
 
             self._logger.debug(
                 f"Message: ({decrypted_message[:50]}) decryption successful",
                 extra={
-                    "message_preview": decrypted_message[:50] if decrypted_message else "",
-                    "sender_key_fingerprint": self._get_key_fingerprint(sender_ecdsa_public_key)
-                }
+                    "message_preview": decrypted_message[:50]
+                    if decrypted_message
+                    else "",
+                    "sender_key_fingerprint": self._get_key_fingerprint(
+                        sender_ecdsa_public_key
+                    ),
+                },
             )
 
             return decrypted_message
@@ -184,15 +186,17 @@ class EncryptionService:
                 "Unexpected error during decryption in service layer",
                 extra={
                     "error_type": e.__class__.__name__,
-                    "ephemeral_key_fingerprint": self._get_key_fingerprint(ephemeral_ecdh_public_key)
+                    "ephemeral_key_fingerprint": self._get_key_fingerprint(
+                        ephemeral_ecdh_public_key
+                    ),
                 },
-                exc_info=True
+                exc_info=True,
             )
 
             raise InfrastructureError(
                 "Message decryption failed due to technical issue",
                 original_error=e,
-                context={"operation": "e2ee_decryption"}
+                context={"operation": "e2ee_decryption"},
             ) from e
 
     async def generate_key_pairs(self) -> dict[str, Any]:
@@ -204,13 +208,7 @@ class EncryptionService:
             ecdh_private, ecdh_public = await self._ecdh_cipher.generate_key_pair()
             ecdsa_private, ecdsa_public = await self._ecdsa_signer.generate_key_pair()
 
-            self._logger.info(
-                "Generated new key pairs",
-                extra={
-                    "ecdh_key_fingerprint": self._get_key_fingerprint(ecdh_public),
-                    "ecdsa_key_fingerprint": self._get_key_fingerprint(ecdsa_public)
-                }
-            )
+            self._logger.info("Generated new key pairs")
 
             return {
                 "ecdh_private_key": ecdh_private,
@@ -222,14 +220,8 @@ class EncryptionService:
         except KeyGenerationError as e:
             raise
         except Exception as e:
-            self._logger.error(
-                "Failed to generate key pairs",
-                exc_info=True
-            )
-            raise InfrastructureError(
-                "Key generation failed",
-                original_error=e
-            ) from e
+            self._logger.error("Failed to generate key pairs", exc_info=True)
+            raise InfrastructureError("Key generation failed", original_error=e) from e
 
     async def sign_string(self, private_key_pem: str, string: str) -> str:
         """
@@ -248,20 +240,16 @@ class EncryptionService:
                 "Unexpected error during signing",
                 extra={
                     "error_type": e.__class__.__name__,
-                    "string_length": len(string)
+                    "string_length": len(string),
                 },
-                exc_info=True
+                exc_info=True,
             )
             raise InfrastructureError(
-                "Failed to sign string due to technical issue",
-                original_error=e
+                "Failed to sign string due to technical issue", original_error=e
             ) from e
 
     async def verify_signature(
-            self,
-            public_key_pem: str,
-            string: str,
-            signature: str
+        self, public_key_pem: str, string: str, signature: str
     ) -> bool:
         """
         Verify ECDSA signature.
@@ -272,9 +260,7 @@ class EncryptionService:
         """
         try:
             return await self._ecdsa_signer.verify_signature(
-                public_key_pem=public_key_pem,
-                message=string,
-                signature=signature
+                public_key_pem=public_key_pem, message=string, signature=signature
             )
 
         except (InvalidKeyError, InvalidCiphertextError, CryptographyError) as e:
@@ -284,11 +270,10 @@ class EncryptionService:
                 "Unexpected error during signature verification",
                 extra={
                     "error_type": e.__class__.__name__,
-                    "string_length": len(string)
+                    "string_length": len(string),
                 },
-                exc_info=True
+                exc_info=True,
             )
             raise InfrastructureError(
-                "Failed to verify signature due to technical issue",
-                original_error=e
+                "Failed to verify signature due to technical issue", original_error=e
             ) from e

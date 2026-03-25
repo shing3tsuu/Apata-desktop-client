@@ -11,25 +11,29 @@ from src.presentation.pages import AppState, Contact, Message
 from src.adapters.api.service import (
     AuthHTTPService,
     ContactHTTPService,
-    MessageHTTPService
+    MessageHTTPService,
 )
 from src.adapters.database.service import (
     LocalUserService,
     ContactService,
-    MessageService
+    MessageService,
 )
 from src.adapters.database.dto import (
-    LocalUserRequestDTO, LocalUserDTO,
-    ContactRequestDTO, ContactDTO,
-    MessageRequestDTO, MessageDTO
+    LocalUserRequestDTO,
+    LocalUserDTO,
+    ContactRequestDTO,
+    ContactDTO,
+    MessageRequestDTO,
+    MessageDTO,
 )
 from src.adapters.encryption.dao import (
     Abstract256Cipher,
     AbstractPasswordHasher,
     AbstractECDHCipher,
-    AbstractECDSASignature
+    AbstractECDSASignature,
 )
 from src.adapters.encryption.storage import EncryptedKeyStorage
+
 
 class LoadingManager:
     def __init__(self, app_state: AppState, container: AsyncContainer):
@@ -49,7 +53,9 @@ class LoadingManager:
 
                 ecdsa_dict = {}
 
-                local_contacts = await contact_service.get_contacts(local_user_id=self._state.local_user_id)
+                local_contacts = await contact_service.get_contacts(
+                    local_user_id=self._state.local_user_id
+                )
 
                 for contact in local_contacts:
                     if contact.ecdsa_public_key:
@@ -59,10 +65,12 @@ class LoadingManager:
                 server_contacts = await contact_http_service.get_contacts(
                     local_user_id=self._state.local_user_id,
                     server_user_id=self._state.server_user_id,
-                    ecdsa_dict=ecdsa_dict
+                    ecdsa_dict=ecdsa_dict,
                 )
 
-                local_contact_map = {contact.server_user_id: contact for contact in local_contacts}
+                local_contact_map = {
+                    contact.server_user_id: contact for contact in local_contacts
+                }
                 # Process each server contact
                 for server_contact in server_contacts:
                     self._state.update_contacts(
@@ -72,7 +80,7 @@ class LoadingManager:
                             ecdh_public_key=server_contact.ecdh_public_key,
                             last_seen=server_contact.last_seen,
                             online=server_contact.online,
-                            status=server_contact.status
+                            status=server_contact.status,
                         )
                     )
                     local_contact = local_contact_map.get(server_contact.server_user_id)
@@ -86,7 +94,7 @@ class LoadingManager:
                                 ecdh_public_key=server_contact.ecdh_public_key,
                                 status=server_contact.status,
                                 last_seen=server_contact.last_seen,
-                                online=server_contact.online
+                                online=server_contact.online,
                             )
                         )
                         self._logger.info(f"Updated contact: {server_contact.username}")
@@ -101,19 +109,23 @@ class LoadingManager:
                                 ecdh_public_key=server_contact.ecdh_public_key,
                                 status=server_contact.status,
                                 last_seen=server_contact.last_seen,
-                                online=server_contact.online
+                                online=server_contact.online,
                             )
                         )
-                        self._logger.info(f"Added new contact: {server_contact.username}")
+                        self._logger.info(
+                            f"Added new contact: {server_contact.username}"
+                        )
 
                 # Remove local contacts that no longer exist on server (need to test)
-                #server_contact_ids = {contact.server_user_id for contact in server_contacts}
-                #for local_contact in local_contacts:
+                # server_contact_ids = {contact.server_user_id for contact in server_contacts}
+                # for local_contact in local_contacts:
                 #    if local_contact.server_user_id not in server_contact_ids:
                 #        await contact_service.delete_contact(local_contact.id)
                 #        self._logger.info(f"Removed local contact: {local_contact.username}")
 
-                self._logger.info(f"Successfully synchronized {len(server_contacts)} contacts")
+                self._logger.info(
+                    f"Successfully synchronized {len(server_contacts)} contacts"
+                )
                 return True, "Contacts synchronized successfully"
 
         except Exception as e:
@@ -141,7 +153,7 @@ class LoadingManager:
 
                 new_messages = await message_http_service.get_undelivered_messages(
                     ecdsa_dict=ecdsa_dict,
-                    recipient_ecdh_private_key=self._state.ecdh_private_key
+                    recipient_ecdh_private_key=self._state.ecdh_private_key,
                 )
 
                 if new_messages is [] or None:
@@ -150,27 +162,30 @@ class LoadingManager:
                 self._logger.info(f"Received {len(new_messages)} new messages")
 
                 for new_message in new_messages:
-                    self._logger.info(f"Adding new message from: {new_message['sender_id']} to local storage...")
+                    self._logger.info(
+                        f"Adding new message from: {new_message['sender_id']} to local storage..."
+                    )
 
                     encrypted_message = await aes_cipher.encrypt(
-                        new_message['decrypted_content'],
-                        self._state.master_key
+                        new_message["decrypted_content"], self._state.master_key
                     )
 
                     await message_service.add_message(
                         MessageRequestDTO(
                             local_user_id=self._state.local_user_id,
-                            server_message_id=new_message['id'],
-                            contact_id=new_message['sender_id'],
+                            server_message_id=new_message["id"],
+                            contact_id=new_message["sender_id"],
                             content=encrypted_message,
-                            content_type=new_message.get('content_type'),
-                            timestamp=new_message.get('timestamp', datetime.utcnow()),
+                            content_type=new_message.get("content_type"),
+                            timestamp=new_message.get("timestamp", datetime.utcnow()),
                             is_outgoing=False,
-                            is_delivered=True
+                            is_delivered=True,
                         )
                     )
 
-                self._logger.info(f"Successfully synchronized {len(new_messages)} messages")
+                self._logger.info(
+                    f"Successfully synchronized {len(new_messages)} messages"
+                )
                 return True, f"Successfully synchronized {len(new_messages)} messages"
 
         except Exception as e:
@@ -187,7 +202,12 @@ class LoadingManager:
 
                 self._logger.info("Rotating keys...")
 
-                ecdh_private_key, ecdh_public_key = await auth_http_service.update_ecdh_key(self._state.ecdsa_private_key)
+                (
+                    ecdh_private_key,
+                    ecdh_public_key,
+                ) = await auth_http_service.update_ecdh_key(
+                    self._state.ecdsa_private_key
+                )
 
                 if not ecdh_private_key:
                     return False, "Failed to rotate keys"

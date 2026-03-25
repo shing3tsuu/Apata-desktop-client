@@ -26,10 +26,10 @@ async def test_generate_key_pair():
         private_key, public_key = await signer.generate_key_pair()
 
         # Verify PEM format
-        assert private_key.startswith('-----BEGIN PRIVATE KEY-----')
-        assert private_key.endswith('-----END PRIVATE KEY-----\n')
-        assert public_key.startswith('-----BEGIN PUBLIC KEY-----')
-        assert public_key.endswith('-----END PUBLIC KEY-----\n')
+        assert private_key.startswith("-----BEGIN PRIVATE KEY-----")
+        assert private_key.endswith("-----END PRIVATE KEY-----\n")
+        assert public_key.startswith("-----BEGIN PUBLIC KEY-----")
+        assert public_key.endswith("-----END PUBLIC KEY-----\n")
 
         # Verify keys are different
         assert private_key != public_key
@@ -80,7 +80,9 @@ async def test_verify_tampered_message():
         tampered_message = "Tampered message"
 
         # Verification should fail
-        is_valid = await signer.verify_signature(public_key, tampered_message, signature)
+        is_valid = await signer.verify_signature(
+            public_key, tampered_message, signature
+        )
 
         assert is_valid == False
     finally:
@@ -123,6 +125,7 @@ async def test_verify_invalid_signature():
         # Create invalid signature (random bytes)
         import base64
         import os
+
         invalid_signature = base64.b64encode(os.urandom(64)).decode()
 
         # Verification should fail
@@ -217,8 +220,7 @@ async def test_concurrent_operations():
 
         # Sign messages concurrently
         sign_tasks = [
-            signer.sign_message(key_pairs[i][0], messages[i])
-            for i in range(3)
+            signer.sign_message(key_pairs[i][0], messages[i]) for i in range(3)
         ]
         signatures = await asyncio.gather(*sign_tasks)
 

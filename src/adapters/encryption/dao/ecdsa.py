@@ -31,7 +31,9 @@ class AbstractECDSASignature(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def verify_signature(self, public_key_pem: str, string: str, signature: str) -> bool:
+    async def verify_signature(
+        self, public_key_pem: str, string: str, signature: str
+    ) -> bool:
         """
         Verify signature
         :param public_key_pem:
@@ -52,10 +54,11 @@ class SECP256R1Signature(AbstractECDSASignature):
             return await loop.run_in_executor(None, self._generate_key_pair)
         except Exception as e:
             if self.logger:
-                self.logger.error("Failed to generate SECP256R1 key pair: %s", str(e), exc_info=True)
+                self.logger.error(
+                    "Failed to generate SECP256R1 key pair: %s", str(e), exc_info=True
+                )
             raise CryptographyError(
-                "Failed to generate signature keys",
-                original_error=e
+                "Failed to generate signature keys", original_error=e
             ) from e
 
     def _generate_key_pair(self) -> tuple[str, str]:
@@ -64,14 +67,14 @@ class SECP256R1Signature(AbstractECDSASignature):
         private_pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption()
-        ).decode('utf-8')
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("utf-8")
 
         public_key = private_key.public_key()
         public_pem = public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        ).decode('utf-8')
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("utf-8")
 
         return private_pem, public_pem
 
@@ -86,8 +89,7 @@ class SECP256R1Signature(AbstractECDSASignature):
             raise
         except Exception as e:
             raise CryptographyError(
-                "Failed to create signature",
-                original_error=e
+                "Failed to create signature", original_error=e
             ) from e
 
     def _sign_string(self, private_key_pem: str, string: str) -> str:
@@ -99,22 +101,19 @@ class SECP256R1Signature(AbstractECDSASignature):
             raise ValueError("Message cannot be empty")
 
         private_key = serialization.load_pem_private_key(
-            private_key_pem.encode(),
-            password=None,
-            backend=default_backend()
+            private_key_pem.encode(), password=None, backend=default_backend()
         )
 
         if not isinstance(private_key, ec.EllipticCurvePrivateKey):
             raise TypeError("Invalid private key type")
 
-        signature = private_key.sign(
-            string.encode('utf-8'),
-            ec.ECDSA(hashes.SHA256())
-        )
+        signature = private_key.sign(string.encode("utf-8"), ec.ECDSA(hashes.SHA256()))
 
-        return base64.b64encode(signature).decode('utf-8')
+        return base64.b64encode(signature).decode("utf-8")
 
-    async def verify_signature(self, public_key_pem: str, message: str, signature: str) -> bool:
+    async def verify_signature(
+        self, public_key_pem: str, message: str, signature: str
+    ) -> bool:
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
@@ -126,11 +125,12 @@ class SECP256R1Signature(AbstractECDSASignature):
             return False
         except Exception as e:
             raise CryptographyError(
-                "Failed to verify signature",
-                original_error=e
+                "Failed to verify signature", original_error=e
             ) from e
 
-    def _verify_signature(self, public_key_pem: str, string: str, signature: str) -> bool:
+    def _verify_signature(
+        self, public_key_pem: str, string: str, signature: str
+    ) -> bool:
         if not public_key_pem:
             raise ValueError("Public key cannot be empty")
         if not isinstance(string, str):
@@ -144,13 +144,11 @@ class SECP256R1Signature(AbstractECDSASignature):
             signature_bytes = base64.b64decode(signature)
         except Exception as e:
             raise InvalidCiphertextError(
-                "Invalid base64 signature",
-                original_error=e
+                "Invalid base64 signature", original_error=e
             ) from e
 
         public_key = serialization.load_pem_public_key(
-            public_key_pem.encode(),
-            backend=default_backend()
+            public_key_pem.encode(), backend=default_backend()
         )
 
         if not isinstance(public_key, ec.EllipticCurvePublicKey):
@@ -158,16 +156,14 @@ class SECP256R1Signature(AbstractECDSASignature):
 
         try:
             public_key.verify(
-                signature_bytes,
-                string.encode('utf-8'),
-                ec.ECDSA(hashes.SHA256())
+                signature_bytes, string.encode("utf-8"), ec.ECDSA(hashes.SHA256())
             )
             return True
         except Exception as e:
             raise SignatureError(
-                "Signature verification failed",
-                original_error=e
+                "Signature verification failed", original_error=e
             ) from e
+
 
 """ 
 This bullshit is not needed yet and generally needs to be rewritten

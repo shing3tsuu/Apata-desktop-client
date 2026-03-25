@@ -10,15 +10,12 @@ from typing import Any
 
 from src.exceptions import *
 
+
 class Abstract256Cipher(ABC):
     """in future maybe we add aes-gcm-siv and chacha20-poly1305 ciphers (for android/ios)"""
 
     @abstractmethod
-    async def encrypt(
-            self,
-            plaintext: str,
-            key: bytes
-    ) -> str:
+    async def encrypt(self, plaintext: str, key: bytes) -> str:
         """
         Encrypts the plaintext using 256-bit cipher with the given key.
         :param plaintext:
@@ -28,11 +25,7 @@ class Abstract256Cipher(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def decrypt(
-            self,
-            ciphertext: str,
-            key: bytes
-    ) -> str:
+    async def decrypt(self, ciphertext: str, key: bytes) -> str:
         """
         Decrypts the ciphertext using 256-bit cipher with the given key.
         :param ciphertext: base64 encoded (important!) ciphertext
@@ -57,21 +50,18 @@ class AES256GCMCipher(Abstract256Cipher):
             raise EncryptionError(
                 "AES encryption failed, unexpected error",
                 original_error=e,
-                context=context
+                context=context,
             ) from e
 
     def _safe_encrypt(self, plaintext: str, key: bytes) -> str:
         if len(key) != 32:
             raise InvalidKeyError(
-                f"AES key must be 32 bytes long",
-                context={"key_length": len(key)}
+                f"AES key must be 32 bytes long", context={"key_length": len(key)}
             )
 
         nonce = os.urandom(12)
         cipher = Cipher(
-            algorithms.AES(key),
-            modes.GCM(nonce),
-            backend=default_backend()
+            algorithms.AES(key), modes.GCM(nonce), backend=default_backend()
         )
         encryptor = cipher.encryptor()
         ciphertext = encryptor.update(plaintext.encode()) + encryptor.finalize()
@@ -92,19 +82,19 @@ class AES256GCMCipher(Abstract256Cipher):
             context = {
                 "ciphertext_preview": b64_ciphertext[:100],
                 "ciphertext_length": len(b64_ciphertext),
-                "key_length": len(key)
+                "key_length": len(key),
             }
             raise DecryptionError(
                 "AES decryption failed, unexpected error",
                 original_error=e,
-                context=context
+                context=context,
             ) from e
 
     def _safe_decrypt(self, b64_ciphertext: str, key: bytes) -> str:
         if not b64_ciphertext or not isinstance(b64_ciphertext, str):
             raise InvalidCiphertextError(
                 "Invalid ciphertext: empty or wrong type",
-                context={"ciphertext_type": type(b64_ciphertext).__name__}
+                context={"ciphertext_type": type(b64_ciphertext).__name__},
             )
 
         try:
@@ -113,20 +103,19 @@ class AES256GCMCipher(Abstract256Cipher):
             raise InvalidCiphertextError(
                 "Invalid base64 encoding",
                 original_error=e,
-                context={"ciphertext_length": len(b64_ciphertext)}
+                context={"ciphertext_length": len(b64_ciphertext)},
             ) from e
 
         if len(ciphertext) < 28:  # 12(nonce) + 16(tag)
             raise InvalidCiphertextError(
                 f"Invalid ciphertext length: {len(ciphertext)} bytes. "
                 f"Minimum required: 28 bytes",
-                context={"ciphertext_length": len(ciphertext)}
+                context={"ciphertext_length": len(ciphertext)},
             )
 
         if len(key) != 32:
             raise InvalidKeyError(
-                f"AES key must be 32 bytes long",
-                context={"key_length": len(key)}
+                f"AES key must be 32 bytes long", context={"key_length": len(key)}
             )
 
         nonce = ciphertext[:12]
@@ -134,9 +123,7 @@ class AES256GCMCipher(Abstract256Cipher):
         tag = ciphertext[-16:]
 
         cipher = Cipher(
-            algorithms.AES(key),
-            modes.GCM(nonce, tag),
-            backend=default_backend()
+            algorithms.AES(key), modes.GCM(nonce, tag), backend=default_backend()
         )
         decryptor = cipher.decryptor()
 
@@ -149,6 +136,6 @@ class AES256GCMCipher(Abstract256Cipher):
                 original_error=e,
                 context={
                     "ciphertext_length": len(b64_ciphertext),
-                    "decoded_length": len(ciphertext)
-                }
+                    "decoded_length": len(ciphertext),
+                },
             ) from e

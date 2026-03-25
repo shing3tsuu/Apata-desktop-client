@@ -1,12 +1,14 @@
 from abc import ABC, abstractmethod
 from typing import TypeVar, Callable, Awaitable
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import ValidationError
 
 from functools import wraps
 
 from src.exceptions import *
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class AbstractCommonDAO(ABC):
     @abstractmethod
@@ -20,6 +22,7 @@ class AbstractCommonDAO(ABC):
     @abstractmethod
     async def rollback(self):
         raise NotImplementedError()
+
 
 class CommonDAO(AbstractCommonDAO):
     def __init__(self, session: AsyncSession):
@@ -37,7 +40,7 @@ class CommonDAO(AbstractCommonDAO):
 
 def error_handler(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
     @wraps(func)
-    async def wrapper(self, *args, **kwargs) -> T:  # Явно принимаем self
+    async def wrapper(self, *args, **kwargs) -> T:
         try:
             result = await func(self, *args, **kwargs)
             await self._common_dao.flush()
@@ -45,16 +48,19 @@ def error_handler(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[
         except ValidationError as e:
             raise DatabaseError(
                 f"Validation/Data mapping error in database in method: {func.__name__}",
-                original_error=e
+                original_error=e,
             )
         except SQLAlchemyError as e:
             raise DatabaseError(
                 f"SQLAlchemy error in database in method: {func.__name__}",
-                original_error=e
+                original_error=e,
             )
         except Exception as e:
             raise DatabaseError(
                 f"Unexpected error in database in method: {func.__name__}",
-                original_error=e
+                original_error=e,
             )
+        finally:
+            await self._common_dao.commit()
+
     return wrapper

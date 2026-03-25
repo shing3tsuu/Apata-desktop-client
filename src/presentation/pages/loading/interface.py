@@ -6,12 +6,27 @@ from random import randint
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QSizePolicy, QScrollArea,
-    QSpacerItem
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QFrame,
+    QSizePolicy,
+    QScrollArea,
+    QSpacerItem,
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QParallelAnimationGroup, \
-    QSequentialAnimationGroup
+from PyQt6.QtCore import (
+    Qt,
+    pyqtSlot,
+    QTimer,
+    QPropertyAnimation,
+    QEasingCurve,
+    QRect,
+    QPoint,
+    QParallelAnimationGroup,
+    QSequentialAnimationGroup,
+)
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QFontDatabase, QLinearGradient
 
 from .manager import LoadingManager
@@ -96,16 +111,15 @@ class MinimalisticProgressBar(QFrame):
             glow_width = 20
 
             gradient = QLinearGradient(
-                self._fill.width() - glow_width, 0,
-                self._fill.width(), 0
+                self._fill.width() - glow_width, 0, self._fill.width(), 0
             )
-            gradient.setColorAt(0, QColor(255, 255, 255, int(255 * glow_intensity * 0.3)))
+            gradient.setColorAt(
+                0, QColor(255, 255, 255, int(255 * glow_intensity * 0.3))
+            )
             gradient.setColorAt(1, Qt.GlobalColor.transparent)
 
             painter.fillRect(
-                self._fill.width() - glow_width, 0,
-                glow_width, self.height(),
-                gradient
+                self._fill.width() - glow_width, 0, glow_width, self.height(), gradient
             )
 
 
@@ -168,8 +182,14 @@ class StatusIndicator(QFrame):
             pen = QPen(QColor(self._color))
             pen.setWidth(2)
             pen.setColor(QColor(self._color))
-            pen.setColor(QColor(pen.color().red(), pen.color().green(),
-                                pen.color().blue(), int(255 * glow_intensity)))
+            pen.setColor(
+                QColor(
+                    pen.color().red(),
+                    pen.color().green(),
+                    pen.color().blue(),
+                    int(255 * glow_intensity),
+                )
+            )
             painter.setPen(pen)
             painter.drawEllipse(-2, -2, 16, 16)
 
@@ -318,8 +338,12 @@ class LoadingInterface(QWidget):
                 background: none;
             }
         """)
-        self.logs_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.logs_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.logs_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.logs_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.logs_scroll_area.setWidgetResizable(True)
 
         # Container widget for logs
@@ -352,7 +376,9 @@ class LoadingInterface(QWidget):
         footer_layout.setContentsMargins(0, 8, 0, 0)
 
         # System info
-        system_info = QLabel("SYNCHRONIZING • ENCRYPTING • ESTABLISHING SECURE CHANNELS")
+        system_info = QLabel(
+            "SYNCHRONIZING • ENCRYPTING • ESTABLISHING SECURE CHANNELS"
+        )
         system_info.setStyleSheet(f"""
             color: {COLOR_TEXT_MUTED};
             font-size: 10px;
@@ -488,18 +514,18 @@ class LoadingInterface(QWidget):
             {
                 "name": "SYNCHRONIZING CONTACTS DATABASE",
                 "method": self.synchronize_contacts,
-                "params": {}
+                "params": {},
             },
             {
                 "name": "LOADING MESSAGE HISTORY",
                 "method": self.load_message_history,
-                "params": {}
+                "params": {},
             },
             {
                 "name": "ROTATING ENCRYPTION KEYS",
                 "method": self.rotate_keys,
-                "params": {}
-            }
+                "params": {},
+            },
         ]
 
         # Start loading process
@@ -511,8 +537,7 @@ class LoadingInterface(QWidget):
             # Initialize LoadingManager
             if not self.loading_manager:
                 self.loading_manager = LoadingManager(
-                    self.main_window.app_state,
-                    self.main_window.container
+                    self.main_window.app_state, self.main_window.container
                 )
 
             # Initial progress animation
@@ -546,7 +571,9 @@ class LoadingInterface(QWidget):
                         self.completed_steps.append(step_name)
                     else:
                         await self.add_step_status(step_name, "error")
-                        await self.show_error(f"Failed to execute: {step_name}\n{message}")
+                        await self.show_error(
+                            f"Failed to execute: {step_name}\n{message}"
+                        )
                         return  # Stop on error
 
                 except Exception as e:
@@ -567,7 +594,7 @@ class LoadingInterface(QWidget):
                 "CONTACTS_SYNC_COMPLETE",
                 "MESSAGE_DECRYPTION_READY",
                 "SECURE_CHANNELS_ESTABLISHED",
-                "MESSENGER_INTERFACE_LOADED"
+                "MESSENGER_INTERFACE_LOADED",
             ]
 
             for step in final_steps:
@@ -578,7 +605,10 @@ class LoadingInterface(QWidget):
             await asyncio.sleep(0.5)
 
             # Check if messenger screen exists in main window
-            if hasattr(self.main_window, 'screens') and "messenger" in self.main_window.screens:
+            if (
+                hasattr(self.main_window, "screens")
+                and "messenger" in self.main_window.screens
+            ):
                 await self.main_window.show_screen("messenger")
             else:
                 logging.warning("Messenger screen not found, staying on loading screen")
@@ -672,7 +702,9 @@ class LoadingInterface(QWidget):
             self.logs_layout.addWidget(step_row)
 
             # Add spacer to push content up
-            spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+            spacer = QSpacerItem(
+                0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
+            )
             self.logs_layout.addItem(spacer)
 
             # Fade in animation
@@ -700,7 +732,9 @@ class LoadingInterface(QWidget):
             self.logs_layout.addWidget(step_row)
 
             # Add spacer back
-            spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+            spacer = QSpacerItem(
+                0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
+            )
             self.logs_layout.addItem(spacer)
 
         # Scroll to bottom

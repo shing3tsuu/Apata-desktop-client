@@ -9,7 +9,8 @@ import qasync
 from dishka import make_async_container, Scope
 
 from src.presentation.pages.login import LoginInterface
-from src.presentation.pages.loading import LoadingInterface
+
+# from src.presentation.pages.loading import LoadingInterface
 from src.presentation.pages.messenger import MessengerInterface
 from src.presentation.pages.contact import ContactInterface
 from src.presentation.pages.settings import SettingsInterface
@@ -17,7 +18,8 @@ from src.presentation.pages import AppState
 
 from src.providers import AppProvider
 
-__all__ = ['aiosqlite', 'sqlalchemy', 'cryptography', 'qasync', 'dishka']
+__all__ = ["aiosqlite", "sqlalchemy", "cryptography", "qasync", "dishka"]
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -59,14 +61,14 @@ class MainWindow(QMainWindow):
                 signature_cipher="ECDSA-SECP256R1",
                 base_url="https://82.202.139.251",
                 verify_ssl=False,
-                base_ws_url="wss://82.202.139.251"
+                base_ws_url="wss://82.202.139.251",
             )
         )
         self.app_state = AppState()
 
         self.screens = {
             "login": LoginInterface(self),
-            "loading": LoadingInterface(self),
+            # "loading": LoadingInterface(self),
             "messenger": MessengerInterface(self),
             "contact": ContactInterface(self),
             "settings": SettingsInterface(self),
@@ -75,7 +77,7 @@ class MainWindow(QMainWindow):
         for name, screen in self.screens.items():
             self.screen_stack.addWidget(screen)
 
-        await self.show_screen("login")
+        await self.show_screen("messenger")
 
     async def show_screen(self, screen_name: str, **kwargs):
         if screen_name not in self.screens:
@@ -84,7 +86,7 @@ class MainWindow(QMainWindow):
 
         screen = self.screens[screen_name]
 
-        if hasattr(screen, 'prepare_screen'):
+        if hasattr(screen, "prepare_screen"):
             await screen.prepare_screen(**kwargs)
 
         self.screen_stack.setCurrentWidget(screen)

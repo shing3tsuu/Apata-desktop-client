@@ -14,6 +14,7 @@ number2 = randint(1, 1000000)
 fake_user_1 = f"fake_user{number1}"
 fake_user_2 = f"fake_user{number2}"
 
+
 async def get_services():
     container = make_async_container(AppProvider())
     async with container() as request_container:
@@ -21,8 +22,10 @@ async def get_services():
         message_service = await request_container.get(MessageHTTPService)
         return auth_service, message_service, container
 
+
 async def close_container(container):
     await container.close()
+
 
 @pytest.mark.asyncio
 async def test_long_polling_timeout_behavior():
@@ -31,7 +34,9 @@ async def test_long_polling_timeout_behavior():
     try:
         # register user
         user_data = await auth_service.register(fake_user_1 + "_timeout")
-        login_data = await auth_service.login(user_data["username"], user_data["ecdsa_private_key"])
+        login_data = await auth_service.login(
+            user_data["username"], user_data["ecdsa_private_key"]
+        )
 
         received_messages = []
         polling_called = asyncio.Event()
@@ -57,7 +62,7 @@ async def test_long_polling_timeout_behavior():
                 token=login_data["access_token"],
                 user_private_key=user_data["ecdh_private_key"],
                 sender_public_keys={},
-                message_callback=message_callback
+                message_callback=message_callback,
             )
         )
 
@@ -87,7 +92,9 @@ async def test_long_polling_timeout_behavior():
                 print(f"Ошибка при отмене задачи: {e}")
 
         # check that there are no messages (as expected during the timeout)
-        assert len(received_messages) == 0, "Не должно быть полученных сообщений при таймауте"
+        assert len(received_messages) == 0, (
+            "Не должно быть полученных сообщений при таймауте"
+        )
 
         # check polling status
         status = message_service.get_polling_status()
@@ -99,6 +106,7 @@ async def test_long_polling_timeout_behavior():
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         pytest.fail(f"Long polling timeout test failed with error: {str(e)}")
     finally:
@@ -115,7 +123,9 @@ async def test_postgres_listen_notify_integration():
         user2_data = await auth_service.register(fake_user_2 + "_postgres")
 
         # login first user
-        login_1 = await auth_service.login(user1_data["username"], user1_data["ecdsa_private_key"])
+        login_1 = await auth_service.login(
+            user1_data["username"], user1_data["ecdsa_private_key"]
+        )
         token_1 = login_1["access_token"]
 
         # get public keys for second user
@@ -123,7 +133,9 @@ async def test_postgres_listen_notify_integration():
         ecdh_public_key_2 = keys_2["ecdh_public_key"]
 
         # preparing long polling for user 2
-        login_2 = await auth_service.login(user2_data["username"], user2_data["ecdsa_private_key"])
+        login_2 = await auth_service.login(
+            user2_data["username"], user2_data["ecdsa_private_key"]
+        )
         token_2 = login_2["access_token"]
 
         keys_1 = await auth_service.get_public_keys(user1_data["id"])
@@ -144,7 +156,7 @@ async def test_postgres_listen_notify_integration():
                 token=token_2,
                 user_private_key=user2_data["ecdh_private_key"],
                 sender_public_keys=sender_public_keys,
-                message_callback=message_callback
+                message_callback=message_callback,
             )
         )
 
@@ -158,7 +170,7 @@ async def test_postgres_listen_notify_integration():
             message=original_message,
             sender_private_key=user1_data["ecdh_private_key"],
             recipient_public_key=ecdh_public_key_2,
-            token=token_1
+            token=token_1,
         )
 
         assert "id" in send_result
@@ -177,7 +189,8 @@ async def test_postgres_listen_notify_integration():
         assert len(received_messages) > 0
 
         success_messages = [
-            msg for msg in received_messages
+            msg
+            for msg in received_messages
             if msg.get("decryption_status") == "success"
         ]
 
@@ -188,6 +201,7 @@ async def test_postgres_listen_notify_integration():
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         pytest.fail(f"PostgreSQL LISTEN/NOTIFY test failed with error: {str(e)}")
     finally:

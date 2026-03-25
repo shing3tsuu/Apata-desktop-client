@@ -14,25 +14,28 @@ from src.presentation.pages import AppState, Contact, Message
 from src.adapters.api.service import (
     AuthHTTPService,
     ContactHTTPService,
-    MessageHTTPService
+    MessageHTTPService,
 )
 
 from src.adapters.database.service import (
     LocalUserService,
     ContactService,
-    MessageService
+    MessageService,
 )
 
 from src.adapters.database.dto import (
-    LocalUserRequestDTO, LocalUserDTO,
-    ContactRequestDTO, ContactDTO,
-    MessageRequestDTO, MessageDTO
+    LocalUserRequestDTO,
+    LocalUserDTO,
+    ContactRequestDTO,
+    ContactDTO,
+    MessageRequestDTO,
+    MessageDTO,
 )
 
 from src.adapters.encryption.dao import (
     Abstract256Cipher,
     AbstractPasswordHasher,
-    AbstractECDHCipher
+    AbstractECDHCipher,
 )
 
 from src.adapters.encryption.storage import EncryptedKeyStorage
@@ -67,15 +70,12 @@ class SettingsManager:
         try:
             self._logger.info(f"Updating timezone to: {timezone}")
             # timezone: +03:00 -> int: 3
-            number = int(timezone.strip().split(':')[0])
+            number = int(timezone.strip().split(":")[0])
 
             async with self._container() as request_container:
                 local_user_service = await request_container.get(LocalUserService)
                 await local_user_service.update_user_data(
-                    LocalUserRequestDTO(
-                        username=self._state.username,
-                        timezone=number
-                    )
+                    LocalUserRequestDTO(username=self._state.username, timezone=number)
                 )
             self._logger.info(f"Successfully updated timezone to: {timezone}")
             return True, "Successfully updated timezone"

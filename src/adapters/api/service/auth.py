@@ -9,10 +9,10 @@ from src.exceptions import *
 
 class AuthHTTPService:
     def __init__(
-            self,
-            auth_dao: AuthHTTPDAO,
-            encryption_service: EncryptionService,
-            logger: logging.Logger = None
+        self,
+        auth_dao: AuthHTTPDAO,
+        encryption_service: EncryptionService,
+        logger: logging.Logger = None,
     ):
         self._auth_dao = auth_dao
         self._encryption_service = encryption_service
@@ -37,7 +37,9 @@ class AuthHTTPService:
         return {
             "is_authenticated": self._is_authenticated,
             "has_token": self._current_token is not None,
-            "current_user": self._current_user.get("username") if self._current_user else None,
+            "current_user": self._current_user.get("username")
+            if self._current_user
+            else None,
             "user_id": self._current_user.get("id") if self._current_user else None,
         }
 
@@ -50,7 +52,7 @@ class AuthHTTPService:
             result = await self._auth_dao.register_user(
                 username=username,
                 ecdsa_public_key=key_dict["ecdsa_public_key"],
-                ecdh_public_key=key_dict["ecdh_public_key"]
+                ecdh_public_key=key_dict["ecdh_public_key"],
             )
 
             self._logger.info(f"User '{username}' registered successfully")
@@ -58,19 +60,18 @@ class AuthHTTPService:
             return {
                 **result,
                 "ecdsa_private_key": key_dict["ecdsa_private_key"],
-                "ecdh_private_key": key_dict["ecdh_private_key"]
+                "ecdh_private_key": key_dict["ecdh_private_key"],
             }
 
         except APIError as e:
             if e.status_code == 409:
                 raise UserAlreadyExistsError(
                     f"Username '{username}' is already taken",
-                    context={"username": username}
+                    context={"username": username},
                 )
             elif e.status_code == 400:
                 raise ValidationError(
-                    "Invalid registration data",
-                    context={"username": username}
+                    "Invalid registration data", context={"username": username}
                 )
             else:
                 raise
@@ -80,8 +81,7 @@ class AuthHTTPService:
 
         except Exception as e:
             self._logger.error(
-                f"Unexpected registration error for '{username}': {e}",
-                exc_info=True
+                f"Unexpected registration error for '{username}': {e}", exc_info=True
             )
             raise InfrastructureError("Registration failed due to technical issue")
 
@@ -96,8 +96,7 @@ class AuthHTTPService:
             challenge = challenge_data["challenge"]
 
             signature = await self._encryption_service.sign_string(
-                private_key_pem=ecdsa_private_key,
-                string=challenge
+                private_key_pem=ecdsa_private_key, string=challenge
             )
 
             result = await self._auth_dao.login(username, signature)
@@ -124,8 +123,7 @@ class AuthHTTPService:
 
         except Exception as e:
             self._logger.error(
-                f"Unexpected login error for '{username}': {e}",
-                exc_info=True
+                f"Unexpected login error for '{username}': {e}", exc_info=True
             )
             self._clear_session()
             raise InfrastructureError("Login failed due to technical issue")
@@ -135,7 +133,9 @@ class AuthHTTPService:
             self._logger.debug("No active session to logout")
             return True
 
-        username = self._current_user.get("username") if self._current_user else "unknown"
+        username = (
+            self._current_user.get("username") if self._current_user else "unknown"
+        )
         self._logger.info(f"Logging out user: {username}")
 
         success = True
@@ -193,14 +193,13 @@ class AuthHTTPService:
             ecdh_public = key_pairs["ecdh_public_key"]
 
             signature = await self._encryption_service.sign_string(
-                sender_ecdsa_private_key,
-                ecdh_public
+                sender_ecdsa_private_key, ecdh_public
             )
 
             await self._auth_dao.update_ecdh_key(
                 ecdh_public_key=ecdh_public,
                 signature=signature,
-                token=self._current_token
+                token=self._current_token,
             )
 
             self._logger.info("ECDH key updated successfully")

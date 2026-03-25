@@ -9,20 +9,21 @@ from src.exceptions import (
     InfrastructureError,
     AuthenticationError,
     RetryableError,
-    NonRetryableError
+    NonRetryableError,
 )
+
 
 class CommonHTTPClient:
     def __init__(
-            self,
-            base_url: str,
-            timeout: float = 60.0,
-            max_retries: int = 3,
-            retry_delay: float = 1.0,
-            verify: bool = False,
-            logger: logging.Logger = None
+        self,
+        base_url: str,
+        timeout: float = 60.0,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        verify: bool = False,
+        logger: logging.Logger = None,
     ):
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -51,7 +52,7 @@ class CommonHTTPClient:
             base_url=self.base_url,
             timeout=self.timeout,
             verify=self.verify,
-            headers=headers
+            headers=headers,
         )
 
         self._logger.debug(f"HTTP client initialized for {self.base_url}")
@@ -79,26 +80,36 @@ class CommonHTTPClient:
     def get_current_token(self) -> str | None:
         return self._current_token
 
-    async def get(self, endpoint: str, params: dict | None = None, **kwargs) -> dict[str, Any]:
+    async def get(
+        self, endpoint: str, params: dict | None = None, **kwargs
+    ) -> dict[str, Any]:
         return await self._request_with_retry("GET", endpoint, params=params, **kwargs)
 
-    async def post(self, endpoint: str, data: dict[str, Any], **kwargs) -> dict[str, Any]:
+    async def post(
+        self, endpoint: str, data: dict[str, Any], **kwargs
+    ) -> dict[str, Any]:
         return await self._request_with_retry("POST", endpoint, json=data, **kwargs)
 
-    async def put(self, endpoint: str, data: dict[str, Any], **kwargs) -> dict[str, Any]:
+    async def put(
+        self, endpoint: str, data: dict[str, Any], **kwargs
+    ) -> dict[str, Any]:
         return await self._request_with_retry("PUT", endpoint, json=data, **kwargs)
 
     async def delete(self, endpoint: str, **kwargs) -> dict[str, Any]:
         return await self._request_with_retry("DELETE", endpoint, **kwargs)
 
-    async def _request_with_retry(self, method: str, endpoint: str, **kwargs) -> dict[str, Any]:
+    async def _request_with_retry(
+        self, method: str, endpoint: str, **kwargs
+    ) -> dict[str, Any]:
         last_exception = None
         request_id = f"{method}_{endpoint}_{self._request_count}"
 
         for attempt in range(self.max_retries):
             try:
                 self._request_count += 1
-                self._logger.debug(f"Request attempt {attempt + 1}/{self.max_retries} [{request_id}]")
+                self._logger.debug(
+                    f"Request attempt {attempt + 1}/{self.max_retries} [{request_id}]"
+                )
 
                 return await self._request(method, endpoint, **kwargs)
 
@@ -111,7 +122,9 @@ class CommonHTTPClient:
                     raise
 
                 if isinstance(e, AuthenticationError):
-                    self._logger.warning(f"Authentication error, no retry [{request_id}]: {e}")
+                    self._logger.warning(
+                        f"Authentication error, no retry [{request_id}]: {e}"
+                    )
                     raise
 
                 if isinstance(e, NonRetryableError):
@@ -119,23 +132,21 @@ class CommonHTTPClient:
                     raise
 
                 if attempt < self.max_retries - 1:
-                    delay = self.retry_delay * (2 ** attempt)
+                    delay = self.retry_delay * (2**attempt)
                     self._logger.warning(
                         f"Request failed, retrying in {delay}s [{request_id}]: {e}"
                     )
                     await asyncio.sleep(delay)
                 else:
                     self._logger.error(
-                        f"All retry attempts failed [{request_id}]: {e}",
-                        exc_info=True
+                        f"All retry attempts failed [{request_id}]: {e}", exc_info=True
                     )
                     raise
 
             except Exception as e:
                 self._error_count += 1
                 self._logger.error(
-                    f"Unexpected error in request [{request_id}]: {e}",
-                    exc_info=True
+                    f"Unexpected error in request [{request_id}]: {e}", exc_info=True
                 )
                 raise InfrastructureError(
                     f"Unexpected error during request: {str(e)}",
@@ -144,8 +155,8 @@ class CommonHTTPClient:
                         "method": method,
                         "endpoint": endpoint,
                         "request_id": request_id,
-                        "attempt": attempt + 1
-                    }
+                        "attempt": attempt + 1,
+                    },
                 ) from e
 
         if last_exception:
@@ -155,7 +166,7 @@ class CommonHTTPClient:
         if not self._client:
             raise InfrastructureError(
                 "HTTP client not initialized. Use async context manager or session() method.",
-                context={"method": method, "endpoint": endpoint}
+                context={"method": method, "endpoint": endpoint},
             )
 
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
@@ -163,7 +174,7 @@ class CommonHTTPClient:
         safe_kwargs = self._sanitize_sensitive_data(kwargs)
         self._logger.info(
             f"Making {method} request to {url}",
-            extra={"method": method, "url": url, "kwargs": safe_kwargs}
+            extra={"method": method, "url": url, "kwargs": safe_kwargs},
         )
 
         try:
@@ -187,7 +198,7 @@ class CommonHTTPClient:
             raise NetworkError(
                 f"Network request failed: {str(e)}",
                 original_error=e,
-                context={"method": method, "url": url, "error_type": type(e).__name__}
+                context={"method": method, "url": url, "error_type": type(e).__name__},
             ) from e
 
         except Exception as e:
@@ -196,10 +207,12 @@ class CommonHTTPClient:
             raise InfrastructureError(
                 f"Unexpected request error: {str(e)}",
                 original_error=e,
-                context={"method": method, "url": url}
+                context={"method": method, "url": url},
             ) from e
 
-    async def _handle_http_error(self, error: httpx.HTTPStatusError, method: str, url: str):
+    async def _handle_http_error(
+        self, error: httpx.HTTPStatusError, method: str, url: str
+    ):
         status_code = error.response.status_code
         response_text = error.response.text[:1000]
 
@@ -215,21 +228,19 @@ class CommonHTTPClient:
             "url": url,
             "status_code": status_code,
             "response_data": response_data,
-            "headers": dict(error.response.headers)
+            "headers": dict(error.response.headers),
         }
 
         if status_code == 401:
             self._logger.warning(f"Authentication failed for {method} {url}")
             raise AuthenticationError(
-                f"Authentication failed: {status_code}",
-                context=context
+                f"Authentication failed: {status_code}", context=context
             ) from error
 
         elif status_code == 403:
             self._logger.warning(f"Access forbidden for {method} {url}")
             raise AuthenticationError(
-                f"Access forbidden: {status_code}",
-                context=context
+                f"Access forbidden: {status_code}", context=context
             ) from error
 
         elif 400 <= status_code < 500:
@@ -240,7 +251,7 @@ class CommonHTTPClient:
                 message=f"Client error: {status_code}",
                 status_code=status_code,
                 response_data=response_data,
-                context=context
+                context=context,
             ) from error
 
         else:  # 500+ errors
@@ -251,7 +262,7 @@ class CommonHTTPClient:
                 message=f"Server error: {status_code}",
                 status_code=status_code,
                 response_data=response_data,
-                context=context
+                context=context,
             ) from error
 
     def _sanitize_sensitive_data(self, data: Any) -> Any:
@@ -272,8 +283,15 @@ class CommonHTTPClient:
 
     def _is_sensitive_key(self, key: str) -> bool:
         sensitive_patterns = {
-            'password', 'token', 'secret', 'key', 'signature',
-            'auth', 'credential', 'private', 'session'
+            "password",
+            "token",
+            "secret",
+            "key",
+            "signature",
+            "auth",
+            "credential",
+            "private",
+            "session",
         }
         key_lower = key.lower()
         return any(pattern in key_lower for pattern in sensitive_patterns)
@@ -295,7 +313,7 @@ class CommonHTTPClient:
             "error_requests": self._error_count,
             "success_rate": self._calculate_success_rate(),
             "has_token": self._current_token is not None,
-            "client_initialized": self._client is not None
+            "client_initialized": self._client is not None,
         }
 
     def _calculate_success_rate(self) -> float:
@@ -303,12 +321,13 @@ class CommonHTTPClient:
             return 100.0
         return ((self._request_count - self._error_count) / self._request_count) * 100
 
-    async def execute_with_fallback(self, operation, fallback_value=None, *args, **kwargs):
+    async def execute_with_fallback(
+        self, operation, fallback_value=None, *args, **kwargs
+    ):
         try:
             return await operation(*args, **kwargs)
         except (APIError, NetworkError, InfrastructureError) as e:
             self._logger.warning(
-                f"Operation failed, using fallback value: {e}",
-                exc_info=True
+                f"Operation failed, using fallback value: {e}", exc_info=True
             )
             return fallback_value

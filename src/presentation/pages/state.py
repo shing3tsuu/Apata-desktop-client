@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from dishka import AsyncContainer
 from datetime import datetime
 
+
 @dataclass(kw_only=True)
 class Contact:
     server_user_id: int
@@ -14,6 +15,7 @@ class Contact:
 
     status: str | None = field(default=None)
 
+
 @dataclass(kw_only=True)
 class Message:
     server_message_id: int
@@ -24,6 +26,7 @@ class Message:
     is_delivered: bool
 
     type: str | None = field(default=None)  # "text", "image", "video", "audio", "file"
+
 
 @dataclass
 class AppState:
@@ -46,17 +49,17 @@ class AppState:
     rejected_contacts = []
 
     def update_from_login(
-            self,
-            username: str,
-            local_user_id: int,
-            server_user_id: int,
-            password: str,
-            master_key: bytes,
-            ecdsa_public_key: str,
-            ecdsa_private_key: str,
-            ecdh_public_key: str,
-            ecdh_private_key: str,
-            token: str,
+        self,
+        username: str,
+        local_user_id: int,
+        server_user_id: int,
+        password: str,
+        master_key: bytes,
+        ecdsa_public_key: str,
+        ecdsa_private_key: str,
+        ecdh_public_key: str,
+        ecdh_private_key: str,
+        token: str,
     ):
         self.username = username
         self.local_user_id = local_user_id
@@ -141,5 +144,5 @@ class AppState:
             "username": self.username,
             "local_user_id": self.local_user_id,
             "server_user_id": self.server_user_id,
-            "is_authenticated": self.is_authenticated
+            "is_authenticated": self.is_authenticated,
         }
