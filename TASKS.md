@@ -48,4 +48,13 @@ Constraints:
 - keep changes for different task numbers in separate commits whenever practical;
 - if a task affects both client and server, use the same task number and title in both repositories.
 
+Implementation notes:
+
+- `apata_frontend` is connected to `Apata-desktop-client`, and `apata-router` is connected to `Apata-router`;
+- both local `main` branches track `origin/main`, and the previous remote histories were preserved through non-destructive merge commits without force pushing;
+- Git uses the GitHub no-reply author identity and Git Credential Manager with encrypted DPAPI storage;
+- global safety settings include fast-forward-only pulls, automatic pruning on fetch, and simple push behavior;
+- project `.gitignore` files exclude secrets, databases, virtual environments, caches, build output, logs, and machine-specific files;
+- the real server JWT secret was removed from `.env.example` before the first push and replaced with a safe placeholder.
+
 closed: true
