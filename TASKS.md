@@ -48,4 +48,4 @@ Constraints:
 - keep changes for different task numbers in separate commits whenever practical;
 - if a task affects both client and server, use the same task number and title in both repositories.
 
-closed: false
+closed: true

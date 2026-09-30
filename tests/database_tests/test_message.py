@@ -531,5 +531,3 @@ async def test_add_message_file_real_video(message_service, test_user, test_cont
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "wb") as f:
         f.write(retrieved[0].file_content)
-
-
