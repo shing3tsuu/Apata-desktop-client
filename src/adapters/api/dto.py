@@ -31,6 +31,56 @@ class DictCompatibleDTO:
         return isinstance(key, str) and key in self.as_dict()
 
 
+@dataclass(slots=True, kw_only=True, frozen=True)
+class MessageProcessingResultDTO(DictCompatibleDTO):
+    message_id: UUID
+    failed: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "message_id": str(self.message_id),
+            "failed": self.failed,
+        }
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class FailedMessageDTO(DictCompatibleDTO):
+    id: UUID
+    recipient_id: UUID
+    chat_id: UUID | None
+    timestamp: datetime
+    is_delivered: bool
+    failed: bool
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any]) -> FailedMessageDTO:
+        chat_id = data.get("chat_id")
+        is_delivered = data.get("is_delivered")
+        failed = data.get("failed")
+        if is_delivered is not True or failed is not True:
+            raise APIError(
+                "Expected a delivered failed message in FailedMessageDTO",
+                response_data=data,
+            )
+
+        try:
+            return cls(
+                id=UUID(_required_str(data, "id", cls.__name__)),
+                recipient_id=UUID(_required_str(data, "recipient_id", cls.__name__)),
+                chat_id=UUID(str(chat_id)) if chat_id is not None else None,
+                timestamp=datetime.fromisoformat(
+                    _required_str(data, "timestamp", cls.__name__)
+                ),
+                is_delivered=is_delivered,
+                failed=failed,
+            )
+        except ValueError as error:
+            raise APIError(
+                "Invalid UUID or datetime field in FailedMessageDTO",
+                response_data=data,
+            ) from error
+
+
 def _required_str(data: dict[str, Any], field: str, dto_name: str) -> str:
     value = data.get(field)
     if isinstance(value, str) and value:

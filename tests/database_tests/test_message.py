@@ -180,6 +180,7 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
                 content=f"Text {index}",
                 timestamp=started_at + timedelta(minutes=index),
                 is_outgoing=index % 2 == 0,
+                failed=index == 10,
             )
         )
 
@@ -221,6 +222,45 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
     ]
     assert app_state.chats_cache[0].messages[-1].file_name == "attachment"
     assert not hasattr(app_state.chats_cache[0].messages[-1], "file_content")
+    assert [
+        item.content
+        for item in app_state.contacts_cache[0].messages
+        if item.failed is True
+    ] == ["Text 10"]
+
+
+@pytest.mark.asyncio
+async def test_mark_messages_failed_updates_outgoing_messages(
+    message_service,
+    test_user,
+    test_contact,
+    master_key,
+):
+    message_service.master_key = master_key
+    server_message_id = uuid.uuid7()
+    saved = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=server_message_id,
+            contact_id=test_contact.id,
+            content="Failed delivery",
+            is_outgoing=True,
+            is_delivered=True,
+        )
+    )
+
+    updated = await message_service.mark_messages_failed(
+        test_user.id,
+        [server_message_id],
+    )
+    messages = await message_service.get_messages(
+        test_user.id,
+        test_contact.id,
+    )
+
+    assert updated == 1
+    assert messages[0].id == saved.id
+    assert messages[0].failed is True
 
 
 @pytest.mark.asyncio
@@ -251,7 +291,9 @@ async def test_add_messages(message_service, test_user, test_contact, master_key
         )
         for i in range(2)
     ]
-    text_results, file_results = await message_service.add_messages(texts=texts, files=files)
+    text_results, file_results = await message_service.add_messages(
+        texts=texts, files=files
+    )
     assert len(text_results) == 3
     assert len(file_results) == 2
     for msg in text_results:
@@ -315,7 +357,9 @@ async def test_get_messages_limit(message_service, test_user, test_contact, mast
 
 @pytest.mark.asyncio
 @timer()
-async def test_get_messages_no_messages(message_service, test_user, test_contact, master_key):
+async def test_get_messages_no_messages(
+    message_service, test_user, test_contact, master_key
+):
     message_service.master_key = master_key
     retrieved = await message_service.get_messages(
         local_user_id=test_user.id,
@@ -405,7 +449,9 @@ async def test_add_messages_with_none_lists(message_service, master_key):
 
 @pytest.mark.asyncio
 @timer()
-async def test_message_text_encryption_decryption(message_service, test_user, test_contact, master_key):
+async def test_message_text_encryption_decryption(
+    message_service, test_user, test_contact, master_key
+):
     message_service.master_key = master_key
     original_text = "Secret message"
     dto = AddMessageTextDTO(
@@ -426,7 +472,9 @@ async def test_message_text_encryption_decryption(message_service, test_user, te
 
 @pytest.mark.asyncio
 @timer()
-async def test_message_file_encryption_decryption(message_service, test_user, test_contact, master_key):
+async def test_message_file_encryption_decryption(
+    message_service, test_user, test_contact, master_key
+):
     message_service.master_key = master_key
     original_data = b"binary file content"
     dto = AddMessageFileDTO(
@@ -450,7 +498,9 @@ async def test_message_file_encryption_decryption(message_service, test_user, te
 
 @pytest.mark.asyncio
 @timer()
-async def test_add_message_file_real_image(message_service, test_user, test_contact, master_key):
+async def test_add_message_file_real_image(
+    message_service, test_user, test_contact, master_key
+):
     message_service.master_key = master_key
 
     test_image_path = Path("tests/test_data/images/image_1.png")
@@ -491,9 +541,12 @@ async def test_add_message_file_real_image(message_service, test_user, test_cont
     with open(output_path, "wb") as f:
         f.write(retrieved[0].file_content)
 
+
 @pytest.mark.asyncio
 @timer()
-async def test_add_message_file_real_video(message_service, test_user, test_contact, master_key):
+async def test_add_message_file_real_video(
+    message_service, test_user, test_contact, master_key
+):
     message_service.master_key = master_key
 
     test_video_path = Path("tests/test_data/video/video_1.mp4")

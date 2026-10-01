@@ -3,6 +3,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from src.adapters.api.dto import FailedMessageDTO, MessageProcessingResultDTO
 from src.adapters.encryption.service import EncryptionService
 from src.exceptions import (
     APIError,
@@ -119,9 +120,7 @@ class MessageHTTPService:
         token = self._current_token
 
         try:
-            response = await self._message_dao.get_undelivered_messages(
-                token=token
-            )
+            response = await self._message_dao.get_undelivered_messages(token=token)
 
             if not response.get("has_messages") or not response.get("messages"):
                 return []
@@ -142,25 +141,28 @@ class MessageHTTPService:
                 )
             )
             decrypted_messages = [
-                message for message in processed_results if message is not None
+                message for message, _ in processed_results if message is not None
             ]
-            if decrypted_messages:
+            processing_results = [
+                result for _, result in processed_results if result is not None
+            ]
+            if processing_results:
                 await self._message_dao.ack_messages(
-                    message_ids=[message["id"] for message in decrypted_messages],
+                    results=processing_results,
                     token=token,
                 )
             return decrypted_messages
 
         except AuthenticationError as e:
             self._logger.warning(
-                f"Authentication failed while retrieving messages: {str(e)}",
+                f"Authentication failed while retrieving messages: {e!s}",
             )
             del self.token
             return []
 
         except Exception as e:
             self._logger.error(
-                f"Error getting undelivered messages: {str(e)}",
+                f"Error getting undelivered messages: {e!s}",
                 exc_info=True,
             )
             return []
@@ -171,8 +173,17 @@ class MessageHTTPService:
         ed_dict: dict[UUID, str],
         recipient_ecdh_private_key: str,
         semaphore: asyncio.Semaphore,
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, MessageProcessingResultDTO | None]:
         async with semaphore:
+            try:
+                message_id = UUID(str(message["id"]))
+            except (KeyError, TypeError, ValueError):
+                self._logger.error(
+                    "Cannot acknowledge message with an invalid ID: %r",
+                    message.get("id"),
+                )
+                return None, None
+
             try:
                 sender_id = UUID(str(message["sender_id"]))
                 sender_ed_public_key = ed_dict.get(sender_id)
@@ -182,7 +193,7 @@ class MessageHTTPService:
                     )
 
                 decrypted_content = await self._encryption_service.decrypt_message(
-                    message_uuid=UUID(str(message["id"])),
+                    message_uuid=message_id,
                     encrypted_message=message["message"],
                     sender_ed_public_key=sender_ed_public_key,
                     recipient_ecdh_private_key=recipient_ecdh_private_key,
@@ -190,32 +201,79 @@ class MessageHTTPService:
                     ephemeral_signature=message["ephemeral_signature"],
                 )
 
-                return {
-                    **message,
-                    "decrypted_content": decrypted_content,
-                    "decryption_status": "success",
-                }
+                return (
+                    {
+                        **message,
+                        "decrypted_content": decrypted_content,
+                        "decryption_status": "success",
+                    },
+                    MessageProcessingResultDTO(
+                        message_id=message_id,
+                        failed=False,
+                    ),
+                )
 
             except DecryptionError as error:
                 self._logger.error(
                     f"Decryption failed for message {message.get('id')}, {error}",
                     exc_info=True,
                 )
-                return None
+                return None, MessageProcessingResultDTO(
+                    message_id=message_id,
+                    failed=True,
+                )
 
             except Exception:
                 self._logger.error(
                     f"Unexpected error processing message {message.get('id')}",
                     exc_info=True,
                 )
-                return None
+                return None, MessageProcessingResultDTO(
+                    message_id=message_id,
+                    failed=True,
+                )
+
+    async def get_failed_messages(self) -> list[FailedMessageDTO]:
+        if self._current_token is None:
+            self._logger.warning(
+                "Cannot retrieve failed messages without an active session"
+            )
+            return []
+
+        try:
+            response = await self._message_dao.get_failed_messages(
+                token=self._current_token
+            )
+            raw_messages = response.get("messages", [])
+            if not isinstance(raw_messages, list):
+                raise APIError("Failed messages response must contain a list")
+
+            messages: list[FailedMessageDTO] = []
+            for raw_message in raw_messages:
+                if not isinstance(raw_message, dict):
+                    raise APIError("Failed message response item must be an object")
+                messages.append(FailedMessageDTO.from_mapping(raw_message))
+            return messages
+        except AuthenticationError:
+            del self.token
+            self._logger.warning(
+                "Authentication failed while retrieving failed messages"
+            )
+            return []
+        except (APIError, InfrastructureError) as error:
+            self._logger.error(
+                "Failed to retrieve message failures: %s",
+                error,
+                exc_info=True,
+            )
+            return []
 
     async def health_check(self) -> bool:
         try:
             return await self._message_dao.health_check()
         except Exception as e:
             self._logger.error(
-                f"Message service health check failed: {str(e)}",
+                f"Message service health check failed: {e!s}",
                 exc_info=True,
             )
             return False

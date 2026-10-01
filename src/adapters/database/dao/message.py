@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from typing import cast
 from uuid import UUID
 
-from sqlalchemy import and_, delete, insert, select
+from sqlalchemy import and_, delete, insert, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.database.dto import (
@@ -44,9 +47,17 @@ class AbstractMessageDAO(ABC):
     async def delete_message(self, message_id: UUID) -> bool:
         raise NotImplementedError()
 
+    @abstractmethod
+    async def mark_messages_failed(
+        self,
+        local_user_id: UUID,
+        server_message_ids: Sequence[UUID],
+    ) -> int:
+        raise NotImplementedError()
+
 
 class MessageDAO(AbstractMessageDAO):
-    __slots__ = "_session"
+    __slots__ = ("_session",)
 
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -95,7 +106,9 @@ class MessageDAO(AbstractMessageDAO):
             )
         )
         result = await self._session.scalar(stmt)
-        return MessageDTO.model_validate(result, from_attributes=True) if result else None
+        return (
+            MessageDTO.model_validate(result, from_attributes=True) if result else None
+        )
 
     async def get_messages(
         self, local_user_id: UUID, contact_id: UUID, limit: int | None = None
@@ -146,6 +159,7 @@ class MessageDAO(AbstractMessageDAO):
                 Message.timestamp,
                 Message.is_outgoing,
                 Message.is_delivered,
+                Message.failed,
             )
             .where(Message.local_user_id == local_user_id, conversation_filter)
             .order_by(Message.timestamp.desc(), Message.id.desc())
@@ -162,4 +176,24 @@ class MessageDAO(AbstractMessageDAO):
     async def delete_message(self, message_id: UUID) -> bool:
         stmt = delete(Message).where(Message.id == message_id)
         result = await self._session.execute(stmt)
-        return result.rowcount > 0
+        return (cast(CursorResult[object], result).rowcount or 0) > 0
+
+    async def mark_messages_failed(
+        self,
+        local_user_id: UUID,
+        server_message_ids: Sequence[UUID],
+    ) -> int:
+        if not server_message_ids:
+            return 0
+
+        stmt = (
+            update(Message)
+            .where(
+                Message.local_user_id == local_user_id,
+                Message.server_message_id.in_(server_message_ids),
+                Message.is_outgoing.is_(True),
+            )
+            .values(failed=True)
+        )
+        result = await self._session.execute(stmt)
+        return cast(CursorResult[object], result).rowcount or 0

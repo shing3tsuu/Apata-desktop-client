@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
+from src.adapters.api.dto import MessageProcessingResultDTO
 from src.exceptions import APIError
 
 from .common import CommonHTTPClient
@@ -49,11 +50,17 @@ class MessageHTTPDAO:
         return self._expect_object(await self._http_client.get("/undelivered"))
 
     async def ack_messages(
-        self, message_ids: Sequence[UUID | str], token: str
+        self,
+        results: Sequence[MessageProcessingResultDTO],
+        token: str,
     ) -> dict[str, Any]:
         self._http_client.set_auth_token(token)
-        data = {"message_ids": [str(message_id) for message_id in message_ids]}
+        data = {"results": [result.as_dict() for result in results]}
         return self._expect_object(await self._http_client.post("/ack", data))
+
+    async def get_failed_messages(self, token: str) -> dict[str, Any]:
+        self._http_client.set_auth_token(token)
+        return self._expect_object(await self._http_client.get("/failed"))
 
     async def health_check(self) -> bool:
         return await self._http_client.health_check()

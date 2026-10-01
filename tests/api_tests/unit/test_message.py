@@ -7,6 +7,7 @@ from uuid import UUID, uuid4, uuid7
 from dishka import Scope, make_async_container
 
 from src.adapters.api.dao import AuthHTTPDAO, MessageHTTPDAO
+from src.adapters.api.dto import MessageProcessingResultDTO
 from src.adapters.api.service import (
     AuthHTTPService,
     ContactHTTPService,
@@ -116,7 +117,12 @@ def test_message_dao_sends_receives_and_acks_against_live_api() -> None:
                 assert len(matching) == 1
 
                 await message_dao.ack_messages(
-                    [message_id],
+                    [
+                        MessageProcessingResultDTO(
+                            message_id=message_id,
+                            failed=False,
+                        )
+                    ],
                     recipient["access_token"],
                 )
                 remaining = await message_dao.get_undelivered_messages(
@@ -133,6 +139,50 @@ def test_message_dao_sends_receives_and_acks_against_live_api() -> None:
     assert received["content_type"] == "text"
     assert remaining.get("has_messages") is False
     assert remaining.get("messages") == []
+
+
+@timer()
+def test_failed_acknowledgement_is_visible_to_sender_against_live_api() -> None:
+    async def scenario() -> tuple[UUID, list[UUID]]:
+        container = _make_container()
+        try:
+            async with container() as request_container:
+                auth_service = await request_container.get(AuthHTTPService)
+                message_dao = await request_container.get(MessageHTTPDAO)
+
+                sender = await _register_and_login(auth_service)
+                recipient = await _register_and_login(auth_service)
+                message_id = uuid7()
+                await message_dao.send_message_text(
+                    recipient_id=UUID(recipient["id"]),
+                    chat_id=None,
+                    message="invalid ciphertext",
+                    message_id=message_id,
+                    content_type="text",
+                    ephemeral_public_key="invalid-public-key",
+                    ephemeral_signature="invalid-signature",
+                    token=sender["access_token"],
+                )
+                await message_dao.ack_messages(
+                    [
+                        MessageProcessingResultDTO(
+                            message_id=message_id,
+                            failed=True,
+                        )
+                    ],
+                    recipient["access_token"],
+                )
+                response = await message_dao.get_failed_messages(sender["access_token"])
+                failed_ids = [
+                    UUID(str(message["id"])) for message in response.get("messages", [])
+                ]
+                return message_id, failed_ids
+        finally:
+            await container.close()
+
+    message_id, failed_ids = asyncio.run(scenario())
+
+    assert message_id in failed_ids
 
 
 @timer()
@@ -176,9 +226,7 @@ def test_message_service_delivers_and_acks_against_live_api() -> None:
                 contact_service.token = recipient["access_token"]
                 contacts = await contact_service.list_all_contacts()
                 sender_contact = next(
-                    contact
-                    for contact in contacts
-                    if contact.user_id == sender["id"]
+                    contact for contact in contacts if contact.user_id == sender["id"]
                 )
 
                 message_service.token = recipient["access_token"]

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import (
@@ -128,17 +128,17 @@ class LocalUser(Base):
     username: Mapped[str] = mapped_column(String(50))
     ed_public_key: Mapped[str] = mapped_column(Text)
     hashed_password: Mapped[str] = mapped_column(String(100), nullable=False)
-    timezone: Mapped[Optional[int]] = mapped_column(default=0)
+    timezone: Mapped[int | None] = mapped_column(default=0)
 
-    contacts: Mapped[List["Contact"]] = relationship(
+    contacts: Mapped[list["Contact"]] = relationship(
         "Contact", back_populates="user", cascade="all, delete-orphan"
     )
 
-    owned_chats: Mapped[List["Chat"]] = relationship(
+    owned_chats: Mapped[list["Chat"]] = relationship(
         "Chat", back_populates="owner", cascade="all, delete-orphan"
     )
 
-    messages: Mapped[List["Message"]] = relationship(
+    messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="local_user", cascade="all, delete-orphan"
     )
 
@@ -177,16 +177,16 @@ class Contact(Base):
 
     user: Mapped["LocalUser"] = relationship("LocalUser", back_populates="contacts")
 
-    chat_links: Mapped[List["ChatParticipant"]] = relationship(
+    chat_links: Mapped[list["ChatParticipant"]] = relationship(
         "ChatParticipant", back_populates="contact", cascade="all, delete-orphan"
     )
 
-    messages: Mapped[List["Message"]] = relationship(
+    messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="contact", cascade="all, delete-orphan"
     )
 
     @property
-    def chats(self) -> List["Chat"]:
+    def chats(self) -> list["Chat"]:
         return [link.chat for link in self.chat_links]
 
 
@@ -200,25 +200,25 @@ class Chat(Base):
     local_user_id: Mapped[UUID] = mapped_column(
         ForeignKey("local_users.id", ondelete="CASCADE")
     )
-    name: Mapped[Optional[str]] = mapped_column(String(100))
+    name: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     owner: Mapped["LocalUser"] = relationship("LocalUser", back_populates="owned_chats")
 
-    participant_links: Mapped[List["ChatParticipant"]] = relationship(
+    participant_links: Mapped[list["ChatParticipant"]] = relationship(
         "ChatParticipant", back_populates="chat", cascade="all, delete-orphan"
     )
 
-    messages: Mapped[List["Message"]] = relationship(
+    messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="chat", cascade="all, delete-orphan"
     )
 
-    events: Mapped[List["ChatEvent"]] = relationship(
+    events: Mapped[list["ChatEvent"]] = relationship(
         "ChatEvent", back_populates="chat", cascade="all, delete-orphan"
     )
 
     @property
-    def participants(self) -> List["Contact"]:
+    def participants(self) -> list["Contact"]:
         return [link.contact for link in self.participant_links]
 
 
@@ -237,7 +237,9 @@ class ChatParticipant(Base):
         ForeignKey("contacts.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(timezone.utc))
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc)
+    )
     left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     chat: Mapped["Chat"] = relationship("Chat", back_populates="participant_links")
@@ -253,9 +255,7 @@ class ChatEvent(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
 
-    chat_id: Mapped[UUID] = mapped_column(
-        ForeignKey("chats.id", ondelete="CASCADE")
-    )
+    chat_id: Mapped[UUID] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"))
     contact_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("contacts.id", ondelete="CASCADE"),
         nullable=True,
@@ -288,10 +288,11 @@ class Message(Base):
         Index("ix_messages_chat_timestamp", "chat_id", "timestamp"),
         Index("ix_messages_is_outgoing", "is_outgoing"),
         Index("ix_messages_is_delivered", "is_delivered"),
+        Index("ix_messages_failed", "failed"),
         Index("ix_messages_timestamp", "timestamp"),
         CheckConstraint(
             "contact_id IS NOT NULL OR chat_id IS NOT NULL",
-            name="message_contact_or_chat_required"
+            name="message_contact_or_chat_required",
         ),
     )
 
@@ -302,14 +303,14 @@ class Message(Base):
     )
     server_message_id: Mapped[UUID]
 
-    contact_id: Mapped[Optional[UUID]] = mapped_column(
+    contact_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("contacts.id", ondelete="CASCADE")
     )
-    chat_id: Mapped[Optional[UUID]] = mapped_column(
+    chat_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("chats.id", ondelete="CASCADE")
     )
 
-    reply_to_id: Mapped[Optional[UUID]] = mapped_column(
+    reply_to_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("messages.id", ondelete="SET NULL")
     )
 
@@ -323,10 +324,10 @@ class Message(Base):
         server_default="text",
     )
 
-    content: Mapped[Optional[str]] = mapped_column(Text)
-    file_name: Mapped[Optional[str]] = mapped_column(String(255))
-    file_content: Mapped[Optional[bytes]] = mapped_column(LargeBinary)
-    file_size: Mapped[Optional[int]]
+    content: Mapped[str | None] = mapped_column(Text)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    file_content: Mapped[bytes | None] = mapped_column(LargeBinary)
+    file_size: Mapped[int | None]
     file_mime_type: Mapped[MessageContentMimeTypeEnum] = mapped_column(
         SAEnum(
             MessageContentMimeTypeEnum,
@@ -337,20 +338,23 @@ class Message(Base):
         server_default=".txt",
     )
 
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(timezone.utc))
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc)
+    )
     is_outgoing: Mapped[bool]
     is_delivered: Mapped[bool] = mapped_column(default=False)
+    failed: Mapped[bool | None] = mapped_column(nullable=True)
 
-    local_user: Mapped["LocalUser"] = relationship("LocalUser", back_populates="messages")
-    contact: Mapped[Optional["Contact"]] = relationship("Contact", back_populates="messages")
+    local_user: Mapped["LocalUser"] = relationship(
+        "LocalUser", back_populates="messages"
+    )
+    contact: Mapped[Optional["Contact"]] = relationship(
+        "Contact", back_populates="messages"
+    )
     chat: Mapped[Optional["Chat"]] = relationship("Chat", back_populates="messages")
     reply_to: Mapped[Optional["Message"]] = relationship(
-        "Message",
-        remote_side=[id],
-        back_populates="replies"
+        "Message", remote_side=[id], back_populates="replies"
     )
-    replies: Mapped[List["Message"]] = relationship(
-        "Message",
-        back_populates="reply_to",
-        cascade="all, delete-orphan"
+    replies: Mapped[list["Message"]] = relationship(
+        "Message", back_populates="reply_to", cascade="all, delete-orphan"
     )

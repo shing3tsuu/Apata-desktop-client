@@ -114,11 +114,7 @@ async def _find_server_contact(
 ) -> ContactPublicDTO | None:
     contacts = await contact_http_service.list_all_contacts()
     return next(
-        (
-            contact
-            for contact in contacts
-            if contact.user_id == str(server_user_id)
-        ),
+        (contact for contact in contacts if contact.user_id == str(server_user_id)),
         None,
     )
 
@@ -162,9 +158,7 @@ class SearchContactsGlobalInteractor:
 
         try:
             async with container() as request_container:
-                contact_http_service = await request_container.get(
-                    ContactHTTPService
-                )
+                contact_http_service = await request_container.get(ContactHTTPService)
                 app_state = await request_container.get(AppState)
                 token = app_state.token
                 if token is None:
@@ -200,9 +194,7 @@ class SendContactRequestInteractor:
                 if token is None or app_state.local_user_id is None:
                     return False, "CONTACT ACTION PREREQUISITES MISSING", None
 
-                contact_http_service = await request_container.get(
-                    ContactHTTPService
-                )
+                contact_http_service = await request_container.get(ContactHTTPService)
                 contact_service = await request_container.get(ContactService)
                 contact_http_service.token = token
                 response = await contact_http_service.create_contact_request(
@@ -232,9 +224,7 @@ class AcceptContactRequestInteractor:
                 if token is None or app_state.local_user_id is None:
                     return False, "CONTACT ACTION PREREQUISITES MISSING", None
 
-                contact_http_service = await request_container.get(
-                    ContactHTTPService
-                )
+                contact_http_service = await request_container.get(ContactHTTPService)
                 contact_service = await request_container.get(ContactService)
                 contact_http_service.token = token
                 server_contact = await _find_server_contact(
@@ -271,9 +261,7 @@ class BlacklistContactInteractor:
                 if token is None or app_state.local_user_id is None:
                     return False, "CONTACT ACTION PREREQUISITES MISSING", None
 
-                contact_http_service = await request_container.get(
-                    ContactHTTPService
-                )
+                contact_http_service = await request_container.get(ContactHTTPService)
                 contact_service = await request_container.get(ContactService)
                 contact_http_service.token = token
                 response = await contact_http_service.blacklist_contact(
@@ -321,9 +309,7 @@ class SendContactTextMessageInteractor:
                     return False, "MESSAGE SENDING PREREQUISITES MISSING", None
 
                 contact_service = await request_container.get(ContactService)
-                message_http_service = await request_container.get(
-                    MessageHTTPService
-                )
+                message_http_service = await request_container.get(MessageHTTPService)
                 message_service = await request_container.get(MessageService)
                 contact = await contact_service.get_contact_by_server_user_id(
                     local_user_id,
@@ -428,6 +414,7 @@ class SendContactTextMessageInteractor:
                 timestamp=saved_message.timestamp,
                 is_outgoing=True,
                 is_delivered=saved_message.is_delivered,
+                failed=saved_message.failed,
             )
         )
         cached_contact.messages.sort(key=lambda message: message.timestamp)

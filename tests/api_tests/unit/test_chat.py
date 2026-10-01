@@ -15,6 +15,7 @@ from src.adapters.api.dto import (
     ChatEventDTO,
     ChatParticipantChangeDTO,
     ChatParticipantDTO,
+    MessageProcessingResultDTO,
 )
 from src.adapters.api.service import (
     AuthHTTPService,
@@ -496,11 +497,21 @@ def test_message_dao_live_sends_with_chat_id_for_active_participants() -> None:
                 )
 
                 await message_dao.ack_messages(
-                    [owner_message_id],
+                    [
+                        MessageProcessingResultDTO(
+                            message_id=owner_message_id,
+                            failed=False,
+                        )
+                    ],
                     participant["access_token"],
                 )
                 await message_dao.ack_messages(
-                    [participant_message_id],
+                    [
+                        MessageProcessingResultDTO(
+                            message_id=participant_message_id,
+                            failed=False,
+                        )
+                    ],
                     owner["access_token"],
                 )
         finally:

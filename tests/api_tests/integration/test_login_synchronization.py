@@ -36,7 +36,6 @@ from src.providers.state import AppState
 from tests.providers import MockDBProvider
 from tests.timing_wrapper import timer
 
-
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
 
 
@@ -301,7 +300,11 @@ def test_registered_user_login_synchronizes_contact_message_and_chat_invitation(
             assert chats_count["added"] == 1
             assert chats_count["participants_added"] == 1
             assert chats_count["events_added"] >= 1
-            assert messages_count == {"text_count": 1, "file_count": 0}
+            assert messages_count == {
+                "text_count": 1,
+                "file_count": 0,
+                "failed_count": 0,
+            }
             assert sender_contact.status == ContactStatusEnum.PENDING_INCOMING
             assert {participant.id for participant in participants} == {
                 sender_contact.id
@@ -337,7 +340,11 @@ def test_registered_user_login_synchronizes_contact_message_and_chat_invitation(
                 "events_added": 0,
                 "unmapped_participants": 0,
             }
-            assert repeat_messages == {"text_count": 0, "file_count": 0}
+            assert repeat_messages == {
+                "text_count": 0,
+                "file_count": 0,
+                "failed_count": 0,
+            }
         finally:
             await container.close()
 
@@ -392,7 +399,11 @@ def test_first_direct_message_creates_and_synchronizes_blank_contact(
                 )
 
             assert contacts_count["added"] == 1
-            assert messages_count == {"text_count": 1, "file_count": 0}
+            assert messages_count == {
+                "text_count": 1,
+                "file_count": 0,
+                "failed_count": 0,
+            }
             assert sender_contact.status == ContactStatusEnum.BLANK
             assert [message.server_message_id for message in messages] == [
                 server_data["message_id"]

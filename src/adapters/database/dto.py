@@ -253,6 +253,7 @@ class AddMessageTextDTO(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_outgoing: bool
     is_delivered: bool = False
+    failed: bool | None = None
 
     @field_validator("timestamp")
     @classmethod
@@ -279,6 +280,7 @@ class AddMessageFileDTO(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_outgoing: bool
     is_delivered: bool = False
+    failed: bool | None = None
 
     @field_validator("timestamp")
     @classmethod
@@ -309,6 +311,7 @@ class AddMessageFileDTO(BaseModel):
 class RequestMessageDTO(BaseModel):
     id: UUID
     is_delivered: bool | None = None
+    failed: bool | None = None
 
 
 class MessageDTO(BaseModel):
@@ -326,6 +329,7 @@ class MessageDTO(BaseModel):
     timestamp: datetime
     is_outgoing: bool
     is_delivered: bool
+    failed: bool | None = None
 
     @field_validator("timestamp")
     @classmethod

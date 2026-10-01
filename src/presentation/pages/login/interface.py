@@ -1,7 +1,26 @@
 import asyncio
-from qasync import asyncSlot
+
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from qasync import asyncSlot
+
+from src.presentation.interactors.login import (
+    AddUserToDatabaseInteractor,
+    CacheConversationsInteractor,
+    CheckLocalUserLoginInteractor,
+    CheckLocalUserRegisterInteractor,
+    ComparePasswordInteractor,
+    ContainKeysInteractor,
+    GetLocalUsernamesInteractor,
+    GetPrivateKeysInteractor,
+    HashingPasswordInteractor,
+    LoginUserInteractor,
+    RegisterUserOnServerInteractor,
+    RotateKeysInteractor,
+    SynchronizeChatsInteractor,
+    SynchronizeContactsInteractor,
+    SyncMessageHistoryInteractor,
+)
 
 from .accounts import LocalAccountsPanel
 from .backgrounds import (
@@ -13,7 +32,7 @@ from .backgrounds import (
     TopRightCorner,
     UpperArtifacts,
 )
-from .buttons import AccountToggleButton, AccessButton, ChooseButton
+from .buttons import AccessButton, AccountToggleButton, ChooseButton
 from .fields import LoginField
 from .logs import LoginLogs
 from .theme import (
@@ -45,23 +64,6 @@ from .theme import (
     COLOR_TRIANGLE_BACKGROUND,
 )
 
-from src.presentation.interactors.login import (
-    GetLocalUsernamesInteractor,
-    CheckLocalUserRegisterInteractor,
-    RegisterUserOnServerInteractor,
-    ContainKeysInteractor,
-    LoginUserInteractor,
-    HashingPasswordInteractor,
-    AddUserToDatabaseInteractor,
-    CheckLocalUserLoginInteractor,
-    ComparePasswordInteractor,
-    GetPrivateKeysInteractor,
-    SynchronizeContactsInteractor,
-    SynchronizeChatsInteractor,
-    SyncMessageHistoryInteractor,
-    RotateKeysInteractor,
-    CacheConversationsInteractor,
-)
 
 class LoginInterface(QWidget):
     def __init__(self, main_window=None):
@@ -283,9 +285,10 @@ class LoginInterface(QWidget):
             self,
             QPoint(0, self.username_field.height() + 8),
         )
-        panel_x = field_position.x() + (
-            self.username_field.width() - self.accounts_panel.width()
-        ) // 2
+        panel_x = (
+            field_position.x()
+            + (self.username_field.width() - self.accounts_panel.width()) // 2
+        )
         self.accounts_panel.move(panel_x, field_position.y())
 
     @asyncSlot()
@@ -297,7 +300,7 @@ class LoginInterface(QWidget):
             success, message = await self.check_local_user_register_interactor(
                 container=self.main_window.container,
                 username=self.username,
-                password=self.password
+                password=self.password,
             )
             self.logs_container.finish_log(success, message)
 
@@ -354,7 +357,7 @@ class LoginInterface(QWidget):
             success, message = await self.check_local_user_login_interactor(
                 container=self.main_window.container,
                 username=self.username,
-                password=self.password
+                password=self.password,
             )
             self.logs_container.finish_log(success, message)
 
@@ -389,7 +392,11 @@ class LoginInterface(QWidget):
                 return
 
             self.logs_container.add_log(text="SYNCHRONIZATION CONTACTS", is_dict=True)
-            success, message, contact_count_dict = await self.synchronize_contacts_interactor(
+            (
+                success,
+                message,
+                contact_count_dict,
+            ) = await self.synchronize_contacts_interactor(
                 container=self.main_window.container
             )
             self.logs_container.finish_log(success, message)
@@ -427,14 +434,20 @@ class LoginInterface(QWidget):
                 f"› LEFT PARTICIPANTS: {participants_left}",
                 indent=4,
             )
-            self.logs_container.add_info(f"› ADDED CHAT EVENTS: {events_added}", indent=4)
+            self.logs_container.add_info(
+                f"› ADDED CHAT EVENTS: {events_added}", indent=4
+            )
             self.logs_container.add_info(
                 f"› UNMAPPED PARTICIPANTS: {unmapped_participants}",
                 indent=4,
             )
 
             self.logs_container.add_log("SYNCHRONIZATION MESSAGES", is_dict=True)
-            success, message, message_count_dict = await self.sync_message_history_interactor(
+            (
+                success,
+                message,
+                message_count_dict,
+            ) = await self.sync_message_history_interactor(
                 container=self.main_window.container
             )
             self.logs_container.finish_log(success, message)
@@ -444,8 +457,13 @@ class LoginInterface(QWidget):
 
             added = message_count_dict.get("text_count", 0)
             edited = message_count_dict.get("file_count", 0)
+            failed = message_count_dict.get("failed_count", 0)
             self.logs_container.add_info(f"› TEXT MESSAGE CATCH: {added}", indent=4)
             self.logs_container.add_info(f"› FILE MESSAGE CATCH: {edited}", indent=4)
+            self.logs_container.add_info(
+                f"› FAILED MESSAGES: {failed}",
+                indent=4,
+            )
 
             self.logs_container.add_log("ROTATING CRYPTOGRAPHY KEYS")
             success, message = await self.rotate_keys_interactor(
@@ -466,9 +484,7 @@ class LoginInterface(QWidget):
         self.logs_container.add_info(
             f"› CONTACTS: {cache_counts['contacts']}", indent=4
         )
-        self.logs_container.add_info(
-            f"› CHATS: {cache_counts['chats']}", indent=4
-        )
+        self.logs_container.add_info(f"› CHATS: {cache_counts['chats']}", indent=4)
         self.logs_container.add_info(
             f"› RECENT MESSAGES: {cache_counts['messages']}", indent=4
         )

@@ -21,7 +21,16 @@ Constraints:
 - do not infer failures indirectly from timestamps or acknowledgement order; the result belongs to a specific `message_id`;
 - preserve the distinction between a message that has not been processed (`NULL`), one that was decrypted successfully (`FALSE`), and one that failed to decrypt (`TRUE`).
 
-closed: false
+Implementation notes:
+
+- the server stores `failed` as a nullable boolean and enforces that a non-null processing result belongs to an acknowledged message;
+- `POST /ack` accepts per-message processing results, and `GET /failed` returns failed messages sent by the authenticated user;
+- the client acknowledges every message with a valid ID after a processing attempt, including decryption failures;
+- message synchronization stores sender-side failures in the local database and conversation cache;
+- outgoing failed messages use the existing failed bubble state and display a cross;
+- the PostgreSQL Alembic migration and the local SQLite schema update were applied during verification.
+
+closed: true
 
 ## Task 2 — Connect Local Projects to Their GitHub Repositories
 

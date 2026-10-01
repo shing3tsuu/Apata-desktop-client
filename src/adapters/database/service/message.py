@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Sequence
 from uuid import UUID
 
 from src.adapters.database.dto import (
@@ -88,17 +89,19 @@ class MessageService:
 
         results = await asyncio.gather(*tasks)
 
-        text_results = results[:len(texts)]
-        file_results = results[len(texts):]
+        text_results = results[: len(texts)]
+        file_results = results[len(texts) :]
         return text_results, file_results
 
     async def _decrypt_one(self, msg: MessageDTO) -> MessageDTO | None:
         try:
             if msg.file_content is not None:
-                decrypted_bytes = await self._aes_cipher.decrypt_bytes_with_message_uuid(
-                    ciphertext=msg.file_content,
-                    key=self._master_key,
-                    message_uuid=msg.server_message_id,
+                decrypted_bytes = (
+                    await self._aes_cipher.decrypt_bytes_with_message_uuid(
+                        ciphertext=msg.file_content,
+                        key=self._master_key,
+                        message_uuid=msg.server_message_id,
+                    )
                 )
                 return msg.model_copy(update={"file_content": decrypted_bytes})
             else:
@@ -127,12 +130,16 @@ class MessageService:
         if self._master_key is None:
             raise ValueError("Master key is not set")
 
-        messages = await self._message_dao.get_messages(local_user_id, contact_id, limit)
+        messages = await self._message_dao.get_messages(
+            local_user_id, contact_id, limit
+        )
 
         if not messages:
             return []
 
-        decrypted_results = await asyncio.gather(*[self._decrypt_one(msg) for msg in messages])
+        decrypted_results = await asyncio.gather(
+            *[self._decrypt_one(msg) for msg in messages]
+        )
         decrypted = [msg for msg in decrypted_results if msg is not None]
         return decrypted
 
@@ -162,3 +169,14 @@ class MessageService:
     @error_handler
     async def delete_message(self, message_id: UUID) -> bool:
         return await self._message_dao.delete_message(message_id)
+
+    @error_handler
+    async def mark_messages_failed(
+        self,
+        local_user_id: UUID,
+        server_message_ids: Sequence[UUID],
+    ) -> int:
+        return await self._message_dao.mark_messages_failed(
+            local_user_id,
+            server_message_ids,
+        )

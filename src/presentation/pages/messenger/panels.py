@@ -158,9 +158,7 @@ class ContactsPanel(QWidget):
         )
         self.search_panel.search_requested.connect(self._forward_search_request)
         self.search_panel.search_cleared.connect(self._clear_search)
-        self.search_panel.create_chat_requested.connect(
-            self.create_chat_requested.emit
-        )
+        self.search_panel.create_chat_requested.connect(self.create_chat_requested.emit)
         layout.addWidget(self.search_panel)
 
         # Скролл-зона для списка контактов
@@ -356,7 +354,13 @@ class MessagesPanel(QWidget):
                 text=text,
                 is_mine=message.is_outgoing,
                 timestamp=message.timestamp,
-                status="sent" if message.is_outgoing else "",
+                status=(
+                    "failed"
+                    if message.failed is True
+                    else "sent"
+                    if message.is_outgoing
+                    else ""
+                ),
             )
             bubble.context_action.connect(self._handle_context_action)
             bubble.delete_requested.connect(self._delete_message)
@@ -491,7 +495,9 @@ class PanelHeader(QWidget):
 
         font = QFont("Roboto", 11)
         if self.letter_spacing:
-            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, self.letter_spacing)
+            font.setLetterSpacing(
+                QFont.SpacingType.AbsoluteSpacing, self.letter_spacing
+            )
         painter.setFont(font)
         if self.alignment == Qt.AlignmentFlag.AlignCenter:
             text_rect = self.rect()

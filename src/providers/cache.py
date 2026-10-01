@@ -25,6 +25,7 @@ class MessageCache:
     timestamp: datetime
     is_outgoing: bool
     is_delivered: bool
+    failed: bool | None = None
 
 
 @dataclass(slots=True)

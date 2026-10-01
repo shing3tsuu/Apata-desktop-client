@@ -10,8 +10,8 @@ from dishka import AsyncContainer
 
 from src.adapters.api.service import (
     AuthHTTPService,
-    ContactHTTPService,
     ChatHTTPService,
+    ContactHTTPService,
     FileHTTPService,
     MessageHTTPService,
     WebSocketService,
@@ -30,22 +30,22 @@ from src.adapters.database.dto import (
     RequestContactDTO,
 )
 from src.adapters.database.service import (
+    ChatService,
     ContactService,
     LocalUserService,
-    ChatService,
-    MessageService
+    MessageService,
 )
-from src.adapters.encryption.dao import AbstractPasswordHasher
-from src.adapters.encryption.storage import EncryptedKeyStorage
 from src.adapters.database.structures import (
     ChatEventTypeEnum,
     ContactStatusEnum,
     MessageContentMimeTypeEnum,
     MessageContentTypeEnum,
 )
-from src.providers.state import AppState
-from src.providers.cache import ChatCache, ContactCache, MessageCache
+from src.adapters.encryption.dao import AbstractPasswordHasher
+from src.adapters.encryption.storage import EncryptedKeyStorage
 from src.exceptions import APIError
+from src.providers.cache import ChatCache, ContactCache, MessageCache
+from src.providers.state import AppState
 
 from .messenger import (
     ApplyPresenceChangedInteractor,
@@ -107,10 +107,7 @@ class CheckLocalUserRegisterInteractor:
 
 
 class RegisterUserOnServerInteractor:
-    async def __call__(
-        self,
-        container: AsyncContainer
-    ) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 auth_http_service = await request_container.get(AuthHTTPService)
@@ -136,10 +133,7 @@ class RegisterUserOnServerInteractor:
 
 
 class ContainKeysInteractor:
-    async def __call__(
-        self,
-        container: AsyncContainer
-    ) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 key_storage = await request_container.get(EncryptedKeyStorage)
@@ -192,10 +186,7 @@ class ContainKeysInteractor:
 
 
 class LoginUserInteractor:
-    async def __call__(
-        self,
-        container: AsyncContainer
-    ) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 auth_http_service = await request_container.get(AuthHTTPService)
@@ -235,10 +226,7 @@ class LoginUserInteractor:
 
 
 class HashingPasswordInteractor:
-    async def __call__(
-        self,
-        container: AsyncContainer
-    ) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 password_hasher = await request_container.get(AbstractPasswordHasher)
@@ -262,10 +250,7 @@ class HashingPasswordInteractor:
 
 
 class AddUserToDatabaseInteractor:
-    async def __call__(
-        self,
-        container: AsyncContainer
-    ) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 local_user_service = await request_container.get(LocalUserService)
@@ -284,7 +269,6 @@ class AddUserToDatabaseInteractor:
 
                 if hashed_password is None:
                     return False, "HASHING PASSWORD SKIPPED"
-
 
                 user = await local_user_service.add_user(
                     AddLocalUserDTO(
@@ -309,10 +293,7 @@ class AddUserToDatabaseInteractor:
 
 class CheckLocalUserLoginInteractor:
     async def __call__(
-        self,
-        container: AsyncContainer,
-        username: str,
-        password: str
+        self, container: AsyncContainer, username: str, password: str
     ) -> tuple[bool, str]:
         try:
             async with container() as request_container:
@@ -345,10 +326,7 @@ class CheckLocalUserLoginInteractor:
 
 
 class ComparePasswordInteractor:
-    async def __call__(
-        self,
-        container: AsyncContainer
-    ) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 password_hasher = await request_container.get(AbstractPasswordHasher)
@@ -376,10 +354,7 @@ class ComparePasswordInteractor:
 
 
 class GetPrivateKeysInteractor:
-    async def __call__(
-        self,
-        container: AsyncContainer
-    ) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 key_storage = await request_container.get(EncryptedKeyStorage)
@@ -426,13 +401,12 @@ class GetPrivateKeysInteractor:
 
         except Exception as e:
             error_msg = f"{(str(e)).upper()}"
-            return False, error_msg\
+            return False, error_msg
 
 
 class SynchronizeContactsInteractor:
     async def __call__(
-        self,
-        container: AsyncContainer
+        self, container: AsyncContainer
     ) -> tuple[bool, str, dict[str, int]]:
         add_contact_counts = 0
         edited_contact_counts = 0
@@ -537,7 +511,11 @@ class SynchronizeContactsInteractor:
                         )
                         edited_contact_counts += 1
 
-                return True, "SUCCESS", {"edited": edited_contact_counts, "added": add_contact_counts}
+                return (
+                    True,
+                    "SUCCESS",
+                    {"edited": edited_contact_counts, "added": add_contact_counts},
+                )
 
         except Exception as e:
             error_msg = f"{(str(e)).upper()}"
@@ -678,8 +656,12 @@ class SynchronizeChatsInteractor:
                         server_chat.id,
                         after=after,
                     )
-                    for event in sorted(events, key=lambda item: (item.timestamp, item.id)):
-                        if await chat_service.get_chat_event_by_server_event_id(event.id):
+                    for event in sorted(
+                        events, key=lambda item: (item.timestamp, item.id)
+                    ):
+                        if await chat_service.get_chat_event_by_server_event_id(
+                            event.id
+                        ):
                             continue
 
                         event_type = ChatEventTypeEnum(event.event_type)
@@ -687,7 +669,9 @@ class SynchronizeChatsInteractor:
                         await chat_service.add_chat_event(
                             AddChatEventDTO(
                                 chat_id=local_chat.id,
-                                contact_id=(actor_contact.id if actor_contact else None),
+                                contact_id=(
+                                    actor_contact.id if actor_contact else None
+                                ),
                                 server_event_id=event.id,
                                 actor_server_user_id=event.user_id,
                                 target_server_user_id=event.target_user_id,
@@ -743,7 +727,9 @@ class SynchronizeChatsInteractor:
                         events,
                         key=lambda item: (item.timestamp, item.id),
                     ):
-                        if await chat_service.get_chat_event_by_server_event_id(event.id):
+                        if await chat_service.get_chat_event_by_server_event_id(
+                            event.id
+                        ):
                             continue
                         event_type = ChatEventTypeEnum(event.event_type)
                         actor_contact = contacts_by_server_id.get(event.user_id)
@@ -770,8 +756,7 @@ class SynchronizeChatsInteractor:
 
 class SyncMessageHistoryInteractor:
     async def __call__(
-        self,
-        container: AsyncContainer
+        self, container: AsyncContainer
     ) -> tuple[bool, str, dict[str, int]]:
         text_count = 0
         file_count = 0
@@ -889,14 +874,26 @@ class SyncMessageHistoryInteractor:
                 )
                 file_count += 1
 
-            return True, "SUCCESS", {"text_count": text_count, "file_count": file_count}
+            failed_messages = await message_http_service.get_failed_messages()
+            failed_message_ids = [message.id for message in failed_messages]
+            failed_count = await message_service.mark_messages_failed(
+                local_user_id,
+                failed_message_ids,
+            )
+
+            return (
+                True,
+                "SUCCESS",
+                {
+                    "text_count": text_count,
+                    "file_count": file_count,
+                    "failed_count": failed_count,
+                },
+            )
 
 
 class RotateKeysInteractor:
-    async def __call__(
-        self,
-        container: AsyncContainer
-    ) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 auth_http_service = await request_container.get(AuthHTTPService)
@@ -922,9 +919,7 @@ class RotateKeysInteractor:
                 (
                     ecdh_private_key,
                     ecdh_public_key,
-                ) = await auth_http_service.update_ecdh_key(
-                    ed_private_key
-                )
+                ) = await auth_http_service.update_ecdh_key(ed_private_key)
 
                 if not ecdh_private_key:
                     return False, "FAILED TO ROTATE KEYS"
@@ -998,7 +993,9 @@ class CacheConversationsInteractor:
                             online=contact.online,
                             ed_public_key=contact.ed_public_key,
                             ecdh_public_key=contact.ecdh_public_key,
-                            messages=[self._cache_message(message) for message in messages],
+                            messages=[
+                                self._cache_message(message) for message in messages
+                            ],
                         )
                     )
 
@@ -1015,18 +1012,24 @@ class CacheConversationsInteractor:
                             server_owner_id=chat.server_owner_id,
                             name=chat.name,
                             created_at=chat.created_at,
-                            messages=[self._cache_message(message) for message in messages],
+                            messages=[
+                                self._cache_message(message) for message in messages
+                            ],
                         )
                     )
 
                 app_state.contacts_cache = contact_cache
                 app_state.chats_cache = chat_cache
-                return True, "SUCCESS", {
-                    "contacts": len(contact_cache),
-                    "chats": len(chat_cache),
-                    "messages": sum(len(item.messages) for item in contact_cache)
-                    + sum(len(item.messages) for item in chat_cache),
-                }
+                return (
+                    True,
+                    "SUCCESS",
+                    {
+                        "contacts": len(contact_cache),
+                        "chats": len(chat_cache),
+                        "messages": sum(len(item.messages) for item in contact_cache)
+                        + sum(len(item.messages) for item in chat_cache),
+                    },
+                )
         except Exception as error:
             return False, str(error).upper(), {}
 
@@ -1045,6 +1048,7 @@ class CacheConversationsInteractor:
             timestamp=message.timestamp,
             is_outgoing=message.is_outgoing,
             is_delivered=message.is_delivered,
+            failed=message.failed,
         )
 
 
