@@ -1,9 +1,17 @@
 import asyncio
 import logging
+import uuid
 from typing import Any
 from uuid import UUID
 
-from src.adapters.api.dto import FailedMessageDTO, MessageProcessingResultDTO
+from src.adapters.api.dto import (
+    ChatMessageBatchDTO,
+    ChatMessageDeliveryDTO,
+    ECDHPublicKeyDTO,
+    FailedMessageDTO,
+    MessageProcessingResultDTO,
+    SentChatMessageDeliveryDTO,
+)
 from src.adapters.encryption.service import EncryptionService
 from src.exceptions import (
     APIError,
@@ -104,6 +112,102 @@ class MessageHTTPService:
                 f"Failed to send encrypted message: {error}", exc_info=True
             )
             return None
+
+    async def send_encrypted_chat_message_text(
+        self,
+        chat_id: UUID,
+        message: str,
+        recipient_ed_public_keys: dict[UUID, str],
+        sender_ed_private_key: str,
+        sender_ecdh_private_key: str,
+        sender_ecdh_public_key: str,
+    ) -> list[SentChatMessageDeliveryDTO]:
+        if self._current_token is None:
+            raise AuthenticationError(
+                "Cannot send a chat message without an active session"
+            )
+        if not recipient_ed_public_keys:
+            raise ValueError("A chat message requires at least one recipient")
+
+        token = self._current_token
+        try:
+            raw_keys = await self._auth_dao.get_ecdh_public_keys_batch(
+                list(recipient_ed_public_keys),
+                token,
+            )
+            key_items = [ECDHPublicKeyDTO.from_mapping(raw_key) for raw_key in raw_keys]
+            key_user_ids = [key.user_id for key in key_items]
+            expected_user_ids = set(recipient_ed_public_keys)
+            if (
+                len(key_user_ids) != len(set(key_user_ids))
+                or set(key_user_ids) != expected_user_ids
+            ):
+                raise APIError("Bulk ECDH key response does not match chat recipients")
+
+            encrypted_deliveries = (
+                await self._encryption_service.encrypt_message_to_chat(
+                    message=message,
+                    sender_ed_private_key=sender_ed_private_key,
+                    recipient_ed_public_keys=recipient_ed_public_keys,
+                    ephemeral_ecdh_private_key=sender_ecdh_private_key,
+                    ephemeral_ecdh_public_key=sender_ecdh_public_key,
+                    recipient_ecdh_public_keys={
+                        key.user_id: key.ecdh_public_key for key in key_items
+                    },
+                    recipient_ecdh_signatures={
+                        key.user_id: key.ecdh_signature for key in key_items
+                    },
+                )
+            )
+            signatures = {
+                delivery.ephemeral_signature for delivery in encrypted_deliveries
+            }
+            if len(signatures) != 1:
+                raise APIError("Chat delivery signatures must be identical")
+
+            logical_message_id = uuid.uuid7()
+            batch = ChatMessageBatchDTO(
+                logical_message_id=logical_message_id,
+                content_type="text",
+                ephemeral_public_key=sender_ecdh_public_key,
+                ephemeral_signature=next(iter(signatures)),
+                deliveries=[
+                    ChatMessageDeliveryDTO(
+                        recipient_id=delivery.recipient_uuid,
+                        message_id=delivery.message_uuid,
+                        message=delivery.encrypted_message,
+                    )
+                    for delivery in encrypted_deliveries
+                ],
+            )
+            raw_response = await self._message_dao.send_chat_message_text(
+                chat_id=chat_id,
+                batch=batch,
+                token=token,
+            )
+            sent_deliveries = [
+                SentChatMessageDeliveryDTO.from_mapping(item) for item in raw_response
+            ]
+            expected_delivery_ids = {
+                delivery.message_uuid for delivery in encrypted_deliveries
+            }
+            if (
+                {delivery.id for delivery in sent_deliveries} != expected_delivery_ids
+                or {delivery.recipient_id for delivery in sent_deliveries}
+                != expected_user_ids
+                or {delivery.logical_message_id for delivery in sent_deliveries}
+                != {logical_message_id}
+                or len({delivery.timestamp for delivery in sent_deliveries}) != 1
+            ):
+                raise APIError("Chat message response does not match the sent batch")
+            return sent_deliveries
+
+        except AuthenticationError:
+            del self.token
+            raise
+        except (APIError, InfrastructureError):
+            self._logger.exception("Failed to send encrypted chat message")
+            raise
 
     async def get_undelivered_messages(
         self,

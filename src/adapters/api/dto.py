@@ -44,6 +44,97 @@ class MessageProcessingResultDTO(DictCompatibleDTO):
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
+class ECDHPublicKeyDTO(DictCompatibleDTO):
+    user_id: UUID
+    ecdh_public_key: str
+    ecdh_signature: str
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any]) -> ECDHPublicKeyDTO:
+        try:
+            return cls(
+                user_id=UUID(_required_str(data, "user_id", cls.__name__)),
+                ecdh_public_key=_required_str(
+                    data,
+                    "ecdh_public_key",
+                    cls.__name__,
+                ),
+                ecdh_signature=_required_str(
+                    data,
+                    "ecdh_signature",
+                    cls.__name__,
+                ),
+            )
+        except ValueError as error:
+            raise APIError(
+                "Invalid UUID field in ECDHPublicKeyDTO",
+                response_data=data,
+            ) from error
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ChatMessageDeliveryDTO(DictCompatibleDTO):
+    recipient_id: UUID
+    message_id: UUID
+    message: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "recipient_id": str(self.recipient_id),
+            "message_id": str(self.message_id),
+            "message": self.message,
+        }
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ChatMessageBatchDTO(DictCompatibleDTO):
+    logical_message_id: UUID
+    content_type: str
+    ephemeral_public_key: str
+    ephemeral_signature: str
+    deliveries: list[ChatMessageDeliveryDTO]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "logical_message_id": str(self.logical_message_id),
+            "content_type": self.content_type,
+            "ephemeral_public_key": self.ephemeral_public_key,
+            "ephemeral_signature": self.ephemeral_signature,
+            "deliveries": [delivery.as_dict() for delivery in self.deliveries],
+        }
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class SentChatMessageDeliveryDTO(DictCompatibleDTO):
+    id: UUID
+    logical_message_id: UUID
+    recipient_id: UUID
+    timestamp: datetime
+
+    @classmethod
+    def from_mapping(
+        cls,
+        data: dict[str, Any],
+    ) -> SentChatMessageDeliveryDTO:
+        try:
+            return cls(
+                id=UUID(_required_str(data, "id", cls.__name__)),
+                logical_message_id=UUID(
+                    _required_str(data, "logical_message_id", cls.__name__)
+                ),
+                recipient_id=UUID(_required_str(data, "recipient_id", cls.__name__)),
+                timestamp=datetime.fromisoformat(
+                    _required_str(data, "timestamp", cls.__name__)
+                ),
+            )
+        except ValueError as error:
+            raise APIError(
+                "Invalid UUID or datetime field in SentChatMessageDeliveryDTO",
+                response_data=data,
+            ) from error
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
 class FailedMessageDTO(DictCompatibleDTO):
     id: UUID
     recipient_id: UUID

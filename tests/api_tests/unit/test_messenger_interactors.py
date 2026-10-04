@@ -8,23 +8,39 @@ from dishka import AsyncContainer
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 
-from src.adapters.api.dto import ContactPageDTO, ContactPublicDTO
+from src.adapters.api.dto import (
+    ChatParticipantDTO,
+    ContactPageDTO,
+    ContactPublicDTO,
+    SentChatMessageDeliveryDTO,
+)
 from src.adapters.api.dao import ContactHTTPDAO
-from src.adapters.api.service import ContactHTTPService, MessageHTTPService
-from src.adapters.database.dto import ContactDTO, MessageDTO
-from src.adapters.database.service import ContactService, MessageService
+from src.adapters.api.service import (
+    ChatHTTPService,
+    ContactHTTPService,
+    MessageHTTPService,
+)
+from src.adapters.database.dto import ChatDTO, ContactDTO, MessageDTO, RequestContactDTO
+from src.adapters.database.service import (
+    ChatService,
+    ContactService,
+    MessageService,
+)
 from src.adapters.database.structures import (
     ContactStatusEnum,
     MessageContentTypeEnum,
 )
+from src.exceptions import APIError
+from src.presentation.interactors.login import SynchronizeContactsInteractor
 from src.presentation.interactors.messenger import (
     AcceptContactRequestInteractor,
     BlacklistContactInteractor,
     SearchContactsGlobalInteractor,
+    SendChatTextMessageInteractor,
     SendContactRequestInteractor,
     SendContactTextMessageInteractor,
 )
-from src.providers.cache import ContactCache
+from src.providers.cache import ChatCache, ContactCache
 from src.providers.state import AppState
 
 
@@ -323,13 +339,9 @@ async def test_accept_contact_request_interactor_updates_database_and_cache() ->
 
     contact_http_service = MagicMock(spec=ContactHTTPService)
     contact_http_service.list_all_contacts = AsyncMock(return_value=[incoming])
-    contact_http_service.accept_contact_request_dto = AsyncMock(
-        return_value=accepted
-    )
+    contact_http_service.accept_contact_request_dto = AsyncMock(return_value=accepted)
     contact_service = MagicMock(spec=ContactService)
-    contact_service.get_contact_by_server_user_id = AsyncMock(
-        return_value=existing
-    )
+    contact_service.get_contact_by_server_user_id = AsyncMock(return_value=existing)
     contact_service.update_contact = AsyncMock(return_value=saved_contact)
     container = cast(
         AsyncContainer,
@@ -375,9 +387,7 @@ async def test_blacklist_contact_interactor_updates_database_and_cache() -> None
     contact_http_service = MagicMock(spec=ContactHTTPService)
     contact_http_service.blacklist_contact = AsyncMock(return_value=response)
     contact_service = MagicMock(spec=ContactService)
-    contact_service.get_contact_by_server_user_id = AsyncMock(
-        return_value=existing
-    )
+    contact_service.get_contact_by_server_user_id = AsyncMock(return_value=existing)
     contact_service.update_contact = AsyncMock(return_value=saved_contact)
     container = cast(
         AsyncContainer,
@@ -448,9 +458,7 @@ async def test_send_contact_text_message_interactor() -> None:
     app_state.contacts_cache = [cached_contact]
 
     contact_service = MagicMock(spec=ContactService)
-    contact_service.get_contact_by_server_user_id = AsyncMock(
-        return_value=contact
-    )
+    contact_service.get_contact_by_server_user_id = AsyncMock(return_value=contact)
     message_http_service = MagicMock(spec=MessageHTTPService)
     message_http_service.send_encrypted_message_text = AsyncMock(
         return_value=server_message_id
@@ -644,9 +652,7 @@ async def test_send_contact_text_message_interactor_handles_server_failure() -> 
         local_contact_id=local_contact_id,
     )
     contact_service = MagicMock(spec=ContactService)
-    contact_service.get_contact_by_server_user_id = AsyncMock(
-        return_value=contact
-    )
+    contact_service.get_contact_by_server_user_id = AsyncMock(return_value=contact)
     message_http_service = MagicMock(spec=MessageHTTPService)
     message_http_service.send_encrypted_message_text = AsyncMock(return_value=None)
     message_service = MagicMock(spec=MessageService)
@@ -670,4 +676,348 @@ async def test_send_contact_text_message_interactor_handles_server_failure() -> 
     )
 
     assert result == (False, "FAILED TO SEND MESSAGE", None)
+    message_service.add_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_contact_mutation_preserves_the_pinned_ed_public_key() -> None:
+    local_user_id = uuid4()
+    cached_contact = make_cached_contact(valid_public_keys=True)
+    replacement_keys = make_cached_contact(valid_public_keys=True)
+    cached_contact.status = ContactStatusEnum.BLANK
+    existing = make_local_contact(
+        cached_contact,
+        local_user_id,
+        ContactStatusEnum.BLANK,
+    )
+    saved_contact = existing.model_copy(
+        update={"status": ContactStatusEnum.PENDING_OUTGOING}
+    )
+    response = ContactPublicDTO(
+        contact_id=str(uuid4()),
+        user_id=str(cached_contact.server_user_id),
+        username=cached_contact.username,
+        ed_public_key=replacement_keys.ed_public_key,
+        ecdh_public_key=replacement_keys.ecdh_public_key,
+        status=ContactStatusEnum.PENDING_OUTGOING.value,
+        online=False,
+        last_seen=None,
+    )
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.contacts_cache = [cached_contact]
+    contact_http_service = MagicMock(spec=ContactHTTPService)
+    contact_http_service.create_contact_request = AsyncMock(return_value=response)
+    contact_service = MagicMock(spec=ContactService)
+    contact_service.get_contact_by_server_user_id = AsyncMock(return_value=existing)
+    contact_service.update_contact = AsyncMock(return_value=saved_contact)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ContactHTTPService: contact_http_service,
+                ContactService: contact_service,
+            }
+        ),
+    )
+
+    result = await SendContactRequestInteractor()(container, cached_contact)
+
+    assert result == (True, "SUCCESS", saved_contact)
+    update = contact_service.update_contact.await_args.args[0]
+    assert update.ed_public_key is None
+    assert cached_contact.ed_public_key == existing.ed_public_key
+    assert cached_contact.ecdh_public_key == replacement_keys.ecdh_public_key
+
+
+@pytest.mark.asyncio
+async def test_contact_synchronization_never_overwrites_a_pinned_ed_key() -> None:
+    local_user_id = uuid4()
+    server_user_id = uuid4()
+    cached_contact = make_cached_contact(valid_public_keys=True)
+    replacement_keys = make_cached_contact(valid_public_keys=True)
+    existing = make_local_contact(
+        cached_contact,
+        local_user_id,
+        ContactStatusEnum.ACCEPTED,
+    )
+    server_contact = RequestContactDTO(
+        local_user_id=local_user_id,
+        server_user_id=cached_contact.server_user_id,
+        status=ContactStatusEnum.ACCEPTED,
+        username=cached_contact.username,
+        ed_public_key=replacement_keys.ed_public_key,
+        ecdh_public_key=replacement_keys.ecdh_public_key,
+        last_seen=None,
+        online=True,
+    )
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.server_user_id = server_user_id
+    contact_http_service = MagicMock(spec=ContactHTTPService)
+    contact_http_service.get_contacts = AsyncMock(return_value=[server_contact])
+    contact_service = MagicMock(spec=ContactService)
+    contact_service.get_contacts = AsyncMock(return_value=[existing])
+    contact_service.update_contact = AsyncMock(return_value=existing)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ContactHTTPService: contact_http_service,
+                ContactService: contact_service,
+            }
+        ),
+    )
+
+    success, message, counts = await SynchronizeContactsInteractor()(container)
+
+    assert success, message
+    assert counts == {"edited": 1, "added": 0}
+    update = contact_service.update_contact.await_args.args[0]
+    assert update.ed_public_key is None
+    assert existing.ed_public_key == cached_contact.ed_public_key
+
+
+@pytest.mark.asyncio
+async def test_send_chat_text_message_interactor_persists_one_logical_message() -> None:
+    timestamp = datetime.now(timezone.utc)
+    local_user_id = uuid4()
+    sender_server_id = uuid4()
+    first_recipient_id = uuid4()
+    second_recipient_id = uuid4()
+    local_chat_id = uuid4()
+    server_chat_id = uuid4()
+    logical_message_id = uuid4()
+    local_chat = ChatDTO(
+        id=local_chat_id,
+        local_user_id=local_user_id,
+        server_chat_id=server_chat_id,
+        server_owner_id=sender_server_id,
+        name="Group chat",
+        created_at=timestamp,
+    )
+    chat_cache = ChatCache(
+        id=local_chat_id,
+        server_chat_id=server_chat_id,
+        server_owner_id=sender_server_id,
+        name="Group chat",
+        created_at=timestamp,
+    )
+    contacts = [
+        ContactDTO.model_construct(
+            id=uuid4(),
+            local_user_id=local_user_id,
+            server_user_id=recipient_id,
+            status=ContactStatusEnum.BLANK,
+            username=f"user_{index}",
+            ed_public_key=f"recipient-{index}-ed-key",
+            ecdh_public_key=f"recipient-{index}-ecdh-key",
+            last_seen=None,
+            online=None,
+        )
+        for index, recipient_id in enumerate(
+            [first_recipient_id, second_recipient_id],
+            start=1,
+        )
+    ]
+    deliveries = [
+        SentChatMessageDeliveryDTO(
+            id=uuid4(),
+            logical_message_id=logical_message_id,
+            recipient_id=recipient_id,
+            timestamp=timestamp,
+        )
+        for recipient_id in [first_recipient_id, second_recipient_id]
+    ]
+    saved_message = MessageDTO(
+        id=uuid4(),
+        local_user_id=local_user_id,
+        server_message_id=deliveries[0].id,
+        logical_message_id=logical_message_id,
+        contact_id=None,
+        chat_id=local_chat_id,
+        content_type=MessageContentTypeEnum.TEXT,
+        content="encrypted-at-rest",
+        timestamp=timestamp,
+        is_outgoing=True,
+        is_delivered=True,
+    )
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.server_user_id = sender_server_id
+    app_state.master_key = b"master-key"
+    app_state.ed_private_key = "sender-ed-private-key"
+    app_state.ecdh_private_key = "sender-ecdh-private-key"
+    app_state.ecdh_public_key = "sender-ecdh-public-key"
+    app_state.chats_cache = [chat_cache]
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.get_participants = AsyncMock(
+        return_value=[
+            ChatParticipantDTO(
+                chat_id=server_chat_id,
+                user_id=user_id,
+                invited_by_user_id=None,
+                joined_at=timestamp,
+                left_at=None,
+            )
+            for user_id in [
+                sender_server_id,
+                first_recipient_id,
+                second_recipient_id,
+            ]
+        ]
+    )
+    contact_http_service = MagicMock(spec=ContactHTTPService)
+    chat_service = MagicMock(spec=ChatService)
+    chat_service.get_chat_by_id = AsyncMock(return_value=local_chat)
+    contact_service = MagicMock(spec=ContactService)
+    contact_service.get_contacts = AsyncMock(return_value=contacts)
+    message_http_service = MagicMock(spec=MessageHTTPService)
+    message_http_service.send_encrypted_chat_message_text = AsyncMock(
+        return_value=deliveries
+    )
+    message_service = MagicMock(spec=MessageService)
+    message_service.add_message_text = AsyncMock(return_value=saved_message)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+                ContactHTTPService: contact_http_service,
+                ChatService: chat_service,
+                ContactService: contact_service,
+                MessageHTTPService: message_http_service,
+                MessageService: message_service,
+            }
+        ),
+    )
+
+    result = await SendChatTextMessageInteractor()(container, chat_cache, " hello ")
+
+    assert result == (True, "SUCCESS", saved_message)
+    message_http_service.send_encrypted_chat_message_text.assert_awaited_once_with(
+        chat_id=server_chat_id,
+        message="hello",
+        recipient_ed_public_keys={
+            first_recipient_id: "recipient-1-ed-key",
+            second_recipient_id: "recipient-2-ed-key",
+        },
+        sender_ed_private_key="sender-ed-private-key",
+        sender_ecdh_private_key="sender-ecdh-private-key",
+        sender_ecdh_public_key="sender-ecdh-public-key",
+    )
+    message_service.add_message_text.assert_awaited_once()
+    stored = message_service.add_message_text.await_args.args[0]
+    assert stored.logical_message_id == logical_message_id
+    assert stored.chat_id == local_chat_id
+    assert len(chat_cache.messages) == 1
+    assert chat_cache.messages[0].logical_message_id == logical_message_id
+
+
+@pytest.mark.asyncio
+async def test_send_chat_text_message_syncs_missing_contacts_once() -> None:
+    timestamp = datetime.now(timezone.utc)
+    local_user_id = uuid4()
+    sender_server_id = uuid4()
+    recipient_id = uuid4()
+    local_chat_id = uuid4()
+    server_chat_id = uuid4()
+    local_chat = ChatDTO(
+        id=local_chat_id,
+        local_user_id=local_user_id,
+        server_chat_id=server_chat_id,
+        server_owner_id=sender_server_id,
+        name="Group chat",
+        created_at=timestamp,
+    )
+    chat_cache = ChatCache(
+        id=local_chat_id,
+        server_chat_id=server_chat_id,
+        server_owner_id=sender_server_id,
+        name="Group chat",
+        created_at=timestamp,
+    )
+    contact_keys = make_cached_contact(valid_public_keys=True)
+    server_contact = ContactPublicDTO(
+        contact_id=str(uuid4()),
+        user_id=str(recipient_id),
+        username="new_member",
+        ed_public_key=contact_keys.ed_public_key,
+        ecdh_public_key=contact_keys.ecdh_public_key,
+        status=ContactStatusEnum.BLANK.value,
+        online=None,
+        last_seen=None,
+    )
+    saved_contact = ContactDTO.model_construct(
+        id=uuid4(),
+        local_user_id=local_user_id,
+        server_user_id=recipient_id,
+        status=ContactStatusEnum.BLANK,
+        username="new_member",
+        ed_public_key=contact_keys.ed_public_key,
+        ecdh_public_key=contact_keys.ecdh_public_key,
+        last_seen=None,
+        online=None,
+    )
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.server_user_id = sender_server_id
+    app_state.master_key = b"master-key"
+    app_state.ed_private_key = "sender-ed-private-key"
+    app_state.ecdh_private_key = "sender-ecdh-private-key"
+    app_state.ecdh_public_key = "sender-ecdh-public-key"
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.get_participants = AsyncMock(
+        return_value=[
+            ChatParticipantDTO(
+                chat_id=server_chat_id,
+                user_id=user_id,
+                invited_by_user_id=None,
+                joined_at=timestamp,
+                left_at=None,
+            )
+            for user_id in [sender_server_id, recipient_id]
+        ]
+    )
+    contact_http_service = MagicMock(spec=ContactHTTPService)
+    contact_http_service.list_all_contacts = AsyncMock(return_value=[server_contact])
+    chat_service = MagicMock(spec=ChatService)
+    chat_service.get_chat_by_id = AsyncMock(return_value=local_chat)
+    contact_service = MagicMock(spec=ContactService)
+    contact_service.get_contacts = AsyncMock(
+        side_effect=[[], [saved_contact], [saved_contact]]
+    )
+    contact_service.add_contact = AsyncMock(return_value=saved_contact)
+    message_http_service = MagicMock(spec=MessageHTTPService)
+    message_http_service.send_encrypted_chat_message_text = AsyncMock(
+        side_effect=APIError("membership changed", status_code=409)
+    )
+    message_service = MagicMock(spec=MessageService)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+                ContactHTTPService: contact_http_service,
+                ChatService: chat_service,
+                ContactService: contact_service,
+                MessageHTTPService: message_http_service,
+                MessageService: message_service,
+            }
+        ),
+    )
+
+    result = await SendChatTextMessageInteractor()(container, chat_cache, "hello")
+
+    assert result == (False, "MEMBERSHIP CHANGED", None)
+    contact_http_service.list_all_contacts.assert_awaited_once()
+    contact_service.add_contact.assert_awaited_once()
     message_service.add_message_text.assert_not_awaited()

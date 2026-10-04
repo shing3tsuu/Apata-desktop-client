@@ -51,7 +51,9 @@ class AuthHTTPDAO:
 
     async def login(self, username: str, signature: str) -> AuthTokenResponseDTO:
         data = {"username": username, "signature": signature}
-        response = self._expect_object(await self._http_client.post("/auth/login", data))
+        response = self._expect_object(
+            await self._http_client.post("/auth/login", data)
+        )
         return AuthTokenResponseDTO.from_mapping(response)
 
     async def logout(self, token: str) -> dict[str, Any]:
@@ -64,12 +66,29 @@ class AuthHTTPDAO:
         self._http_client.set_auth_token(token)
         return self._expect_object(await self._http_client.get("/me"))
 
-    async def get_public_keys(
-        self, user_id: UUID | str, token: str
-    ) -> dict[str, Any]:
+    async def get_public_keys(self, user_id: UUID | str, token: str) -> dict[str, Any]:
         self._http_client.set_auth_token(token)
         return self._expect_object(
             await self._http_client.get(f"/public-keys/{user_id}")
+        )
+
+    async def get_ecdh_public_keys_batch(
+        self,
+        user_ids: list[UUID],
+        token: str,
+    ) -> list[dict[str, Any]]:
+        self._http_client.set_auth_token(token)
+        response = await self._http_client.post(
+            "/public-keys/ecdh/batch",
+            {"user_ids": [str(user_id) for user_id in user_ids]},
+        )
+        if isinstance(response, list) and all(
+            isinstance(item, dict) for item in response
+        ):
+            return response
+        raise APIError(
+            "Expected JSON object list response from ECDH key API",
+            response_data={"response_type": type(response).__name__},
         )
 
     async def update_ecdh_key(

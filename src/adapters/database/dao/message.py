@@ -149,6 +149,7 @@ class MessageDAO(AbstractMessageDAO):
                 Message.id,
                 Message.local_user_id,
                 Message.server_message_id,
+                Message.logical_message_id,
                 Message.contact_id,
                 Message.chat_id,
                 Message.content_type,

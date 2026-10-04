@@ -26,6 +26,7 @@ class MessageCache:
     is_outgoing: bool
     is_delivered: bool
     failed: bool | None = None
+    logical_message_id: UUID | None = None
 
 
 @dataclass(slots=True)

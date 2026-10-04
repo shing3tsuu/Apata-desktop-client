@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from src.adapters.api.dto import MessageProcessingResultDTO
+from src.adapters.api.dto import ChatMessageBatchDTO, MessageProcessingResultDTO
 from src.exceptions import APIError
 
 from .common import CommonHTTPClient
@@ -19,6 +19,17 @@ class MessageHTTPDAO:
 
         raise APIError(
             "Expected JSON object response from message API",
+            response_data={"response_type": type(response).__name__},
+        )
+
+    @staticmethod
+    def _expect_list(response: dict[str, Any] | list[Any]) -> list[dict[str, Any]]:
+        if isinstance(response, list) and all(
+            isinstance(item, dict) for item in response
+        ):
+            return response
+        raise APIError(
+            "Expected JSON object list response from message API",
             response_data={"response_type": type(response).__name__},
         )
 
@@ -44,6 +55,20 @@ class MessageHTTPDAO:
             "ephemeral_signature": ephemeral_signature,
         }
         await self._http_client.post("/send", data)
+
+    async def send_chat_message_text(
+        self,
+        chat_id: UUID,
+        batch: ChatMessageBatchDTO,
+        token: str,
+    ) -> list[dict[str, Any]]:
+        self._http_client.set_auth_token(token)
+        return self._expect_list(
+            await self._http_client.post(
+                f"/chats/{chat_id}/messages",
+                batch.as_dict(),
+            )
+        )
 
     async def get_undelivered_messages(self, token: str) -> dict[str, Any]:
         self._http_client.set_auth_token(token)

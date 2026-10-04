@@ -302,6 +302,7 @@ class Message(Base):
         ForeignKey("local_users.id", ondelete="CASCADE")
     )
     server_message_id: Mapped[UUID]
+    logical_message_id: Mapped[UUID] = mapped_column(index=True)
 
     contact_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("contacts.id", ondelete="CASCADE")

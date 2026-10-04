@@ -477,7 +477,7 @@ class SynchronizeContactsInteractor:
                                 f"Server contact {contact_server_user_id} is incomplete"
                             )
 
-                        add_contact = await contact_service.add_contact(
+                        await contact_service.add_contact(
                             AddContactDTO(
                                 local_user_id=local_user_id,
                                 server_user_id=contact_server_user_id,
@@ -489,7 +489,6 @@ class SynchronizeContactsInteractor:
                                 online=server_contact.online,
                             )
                         )
-                        print(add_contact)
                         add_contact_counts += 1
 
                 server_contact_ids = {
@@ -823,6 +822,12 @@ class SyncMessageHistoryInteractor:
                     AddMessageTextDTO(
                         local_user_id=local_user_id,
                         server_message_id=UUID(str(new_message_text["id"])),
+                        logical_message_id=UUID(
+                            str(
+                                new_message_text.get("logical_message_id")
+                                or new_message_text["id"]
+                            )
+                        ),
                         contact_id=(local_contact.id if local_contact else None),
                         chat_id=(local_chat.id if local_chat else None),
                         content=new_message_text["decrypted_content"],
@@ -1038,6 +1043,7 @@ class CacheConversationsInteractor:
         return MessageCache(
             id=message.id,
             server_message_id=message.server_message_id,
+            logical_message_id=message.logical_message_id,
             contact_id=message.contact_id,
             chat_id=message.chat_id,
             content_type=message.content_type,

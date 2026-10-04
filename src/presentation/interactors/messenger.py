@@ -5,17 +5,23 @@ from uuid import UUID
 from dishka import AsyncContainer
 
 from src.adapters.api.dto import ContactPublicDTO
-from src.adapters.api.service import ContactHTTPService, MessageHTTPService
+from src.adapters.api.service import (
+    ChatHTTPService,
+    ContactHTTPService,
+    MessageHTTPService,
+)
 from src.adapters.database.dto import (
     AddContactDTO,
     AddMessageTextDTO,
+    ChatDTO,
     ContactDTO,
     MessageDTO,
     RequestContactDTO,
 )
-from src.adapters.database.service import ContactService, MessageService
+from src.adapters.database.service import ChatService, ContactService, MessageService
 from src.adapters.database.structures import ContactStatusEnum, MessageContentTypeEnum
-from src.providers.cache import ContactCache, MessageCache
+from src.exceptions import APIError
+from src.providers.cache import ChatCache, ContactCache, MessageCache
 from src.providers.state import AppState
 
 
@@ -72,7 +78,6 @@ async def _persist_contact_mutation(
                 server_user_id=server_user_id,
                 status=status,
                 username=response.username,
-                ed_public_key=response.ed_public_key,
                 ecdh_public_key=response.ecdh_public_key,
                 last_seen=last_seen,
                 online=response.online,
@@ -102,7 +107,7 @@ async def _persist_contact_mutation(
         target.status = status
         target.last_seen = last_seen
         target.online = response.online
-        target.ed_public_key = response.ed_public_key
+        target.ed_public_key = saved_contact.ed_public_key
         target.ecdh_public_key = response.ecdh_public_key
 
     return saved_contact
@@ -404,6 +409,7 @@ class SendContactTextMessageInteractor:
             MessageCache(
                 id=saved_message.id,
                 server_message_id=saved_message.server_message_id,
+                logical_message_id=saved_message.logical_message_id,
                 contact_id=saved_message.contact_id,
                 chat_id=None,
                 content_type=MessageContentTypeEnum.TEXT,
@@ -419,6 +425,235 @@ class SendContactTextMessageInteractor:
         )
         cached_contact.messages.sort(key=lambda message: message.timestamp)
         del cached_contact.messages[:-10]
+
+
+class SendChatTextMessageInteractor:
+    async def __call__(
+        self,
+        container: AsyncContainer,
+        chat_cache: ChatCache,
+        text: str,
+    ) -> tuple[bool, str, MessageDTO | None]:
+        message_text = text.strip()
+        if not message_text:
+            return False, "MESSAGE CANNOT BE EMPTY", None
+
+        try:
+            async with container() as request_container:
+                app_state = await request_container.get(AppState)
+                token = app_state.token
+                local_user_id = app_state.local_user_id
+                server_user_id = app_state.server_user_id
+                master_key = app_state.master_key
+                ed_private_key = app_state.ed_private_key
+                ecdh_private_key = app_state.ecdh_private_key
+                ecdh_public_key = app_state.ecdh_public_key
+                if (
+                    token is None
+                    or local_user_id is None
+                    or server_user_id is None
+                    or master_key is None
+                    or ed_private_key is None
+                    or ecdh_private_key is None
+                    or ecdh_public_key is None
+                ):
+                    return False, "MESSAGE SENDING PREREQUISITES MISSING", None
+
+                chat_http_service = await request_container.get(ChatHTTPService)
+                contact_http_service = await request_container.get(ContactHTTPService)
+                chat_service = await request_container.get(ChatService)
+                contact_service = await request_container.get(ContactService)
+                message_http_service = await request_container.get(MessageHTTPService)
+                message_service = await request_container.get(MessageService)
+
+                local_chat: ChatDTO = await chat_service.get_chat_by_id(chat_cache.id)
+                if local_chat.server_chat_id != chat_cache.server_chat_id:
+                    return False, "CHAT CACHE DOES NOT MATCH LOCAL CHAT", None
+
+                chat_http_service.token = token
+                contact_http_service.token = token
+                message_http_service.token = token
+
+                sent_deliveries = None
+                for attempt in range(2):
+                    participants = await chat_http_service.get_participants(
+                        chat_cache.server_chat_id
+                    )
+                    participant_ids = [
+                        participant.user_id for participant in participants
+                    ]
+                    if len(participant_ids) != len(set(participant_ids)):
+                        return False, "CHAT PARTICIPANTS MUST BE UNIQUE", None
+                    if server_user_id not in participant_ids:
+                        return False, "USER IS NOT AN ACTIVE CHAT PARTICIPANT", None
+
+                    recipient_ids = set(participant_ids) - {server_user_id}
+                    if not recipient_ids:
+                        return False, "CHAT HAS NO MESSAGE RECIPIENTS", None
+
+                    local_contacts = await contact_service.get_contacts(local_user_id)
+                    contacts_by_server_id = {
+                        contact.server_user_id: contact for contact in local_contacts
+                    }
+                    missing_contact_ids = recipient_ids - set(contacts_by_server_id)
+                    if missing_contact_ids:
+                        server_contacts = await contact_http_service.list_all_contacts()
+                        server_contacts_by_id = {
+                            UUID(contact.user_id): contact
+                            for contact in server_contacts
+                            if UUID(contact.user_id) in missing_contact_ids
+                        }
+                        for missing_contact_id in sorted(
+                            missing_contact_ids,
+                            key=str,
+                        ):
+                            server_contact = server_contacts_by_id.get(
+                                missing_contact_id
+                            )
+                            if server_contact is None:
+                                continue
+                            saved_contact = await contact_service.add_contact(
+                                AddContactDTO(
+                                    local_user_id=local_user_id,
+                                    server_user_id=missing_contact_id,
+                                    status=ContactStatusEnum(server_contact.status),
+                                    username=server_contact.username,
+                                    ed_public_key=server_contact.ed_public_key,
+                                    ecdh_public_key=server_contact.ecdh_public_key,
+                                    last_seen=_parse_last_seen(
+                                        server_contact.last_seen
+                                    ),
+                                    online=server_contact.online,
+                                )
+                            )
+                            cached_contact = next(
+                                (
+                                    contact
+                                    for contact in app_state.contacts_cache
+                                    if contact.server_user_id == missing_contact_id
+                                ),
+                                None,
+                            )
+                            if cached_contact is None:
+                                app_state.contacts_cache.append(
+                                    ContactCache(
+                                        id=saved_contact.id,
+                                        server_user_id=saved_contact.server_user_id,
+                                        username=saved_contact.username,
+                                        status=saved_contact.status,
+                                        last_seen=saved_contact.last_seen,
+                                        online=saved_contact.online,
+                                        ed_public_key=saved_contact.ed_public_key,
+                                        ecdh_public_key=saved_contact.ecdh_public_key,
+                                    )
+                                )
+                            else:
+                                cached_contact.id = saved_contact.id
+                                cached_contact.username = saved_contact.username
+                                cached_contact.status = saved_contact.status
+                                cached_contact.last_seen = saved_contact.last_seen
+                                cached_contact.online = saved_contact.online
+                                cached_contact.ed_public_key = (
+                                    saved_contact.ed_public_key
+                                )
+                                cached_contact.ecdh_public_key = (
+                                    saved_contact.ecdh_public_key
+                                )
+
+                        local_contacts = await contact_service.get_contacts(
+                            local_user_id
+                        )
+                        contacts_by_server_id = {
+                            contact.server_user_id: contact
+                            for contact in local_contacts
+                        }
+
+                    if any(
+                        recipient_id not in contacts_by_server_id
+                        or not contacts_by_server_id[recipient_id].ed_public_key
+                        for recipient_id in recipient_ids
+                    ):
+                        return False, "PINNED ED PUBLIC KEY IS MISSING", None
+
+                    recipient_ed_public_keys: dict[UUID, str] = {}
+                    for recipient_id in recipient_ids:
+                        ed_public_key = contacts_by_server_id[
+                            recipient_id
+                        ].ed_public_key
+                        assert ed_public_key is not None
+                        recipient_ed_public_keys[recipient_id] = ed_public_key
+                    try:
+                        sent_deliveries = (
+                            await message_http_service.send_encrypted_chat_message_text(
+                                chat_id=chat_cache.server_chat_id,
+                                message=message_text,
+                                recipient_ed_public_keys=recipient_ed_public_keys,
+                                sender_ed_private_key=ed_private_key,
+                                sender_ecdh_private_key=ecdh_private_key,
+                                sender_ecdh_public_key=ecdh_public_key,
+                            )
+                        )
+                        break
+                    except APIError as error:
+                        if error.status_code != 409 or attempt == 1:
+                            raise
+
+                if not sent_deliveries:
+                    return False, "FAILED TO SEND CHAT MESSAGE", None
+
+                representative = min(
+                    sent_deliveries,
+                    key=lambda delivery: str(delivery.id),
+                )
+                message_service.master_key = master_key
+                saved_message = await message_service.add_message_text(
+                    AddMessageTextDTO(
+                        local_user_id=local_user_id,
+                        server_message_id=representative.id,
+                        logical_message_id=representative.logical_message_id,
+                        chat_id=local_chat.id,
+                        content=message_text,
+                        content_type=MessageContentTypeEnum.TEXT,
+                        timestamp=representative.timestamp,
+                        is_outgoing=True,
+                        is_delivered=True,
+                    )
+                )
+                cached_message = MessageCache(
+                    id=saved_message.id,
+                    server_message_id=saved_message.server_message_id,
+                    logical_message_id=saved_message.logical_message_id,
+                    contact_id=None,
+                    chat_id=saved_message.chat_id,
+                    content_type=MessageContentTypeEnum.TEXT,
+                    content=message_text,
+                    file_name=None,
+                    file_size=None,
+                    file_mime_type=None,
+                    timestamp=saved_message.timestamp,
+                    is_outgoing=True,
+                    is_delivered=saved_message.is_delivered,
+                    failed=None,
+                )
+                cache_targets = [chat_cache]
+                state_chat = next(
+                    (
+                        cached_chat
+                        for cached_chat in app_state.chats_cache
+                        if cached_chat.id == local_chat.id
+                    ),
+                    None,
+                )
+                if state_chat is not None and state_chat is not chat_cache:
+                    cache_targets.append(state_chat)
+                for target in cache_targets:
+                    target.messages.append(cached_message)
+                    target.messages.sort(key=lambda message: message.timestamp)
+                    del target.messages[:-10]
+                return True, "SUCCESS", saved_message
+
+        except Exception as error:
+            return False, str(error).upper(), None
 
 
 class ApplyPresenceChangedInteractor:

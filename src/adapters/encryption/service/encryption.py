@@ -29,6 +29,7 @@ from src.exceptions import SecurityError
 class EncryptionService:
     _FILE_CHUNK_INDEX_SIZE = 8
     _FILE_AEAD_OVERHEAD = 28
+    _MAX_CONCURRENT_CHAT_ENCRYPTIONS = 4
 
     @staticmethod
     def _validate_file_name(value: Any) -> str:
@@ -165,7 +166,7 @@ class EncryptionService:
         ephemeral_ecdh_public_key: str,
         recipient_ecdh_public_keys: dict[UUID, str],
         recipient_ecdh_signatures: dict[UUID, str],
-    ) -> list[dict[str, Any]]:
+    ) -> list[EncryptMessageToChatResult]:
         """
         Encrypts a message for multiple recipients (chat).
 
@@ -176,15 +177,12 @@ class EncryptionService:
         :param ephemeral_ecdh_public_key: ephemeral ECDH public key (same for all recipients)
         :param recipient_ecdh_public_keys: dict {recipient_uuid: ECDH public key}
         :param recipient_ecdh_signatures: dict {recipient_uuid: signature of ECDH key}
-        :return: list of dicts, each containing:
-                 - recipient_uuid: UUID
-                 - encrypted_message: base64 ciphertext
-                 - ephemeral_signature: signature of ephemeral public key
-                 - message_uuid: UUIDv7 used for encryption (unique per recipient)
+        :return: one encrypted delivery result per recipient
         """
         recipient_set = set(recipient_ed_public_keys.keys())
-        if (recipient_set != set(recipient_ecdh_public_keys.keys()) or
-                recipient_set != set(recipient_ecdh_signatures.keys())):
+        if recipient_set != set(
+            recipient_ecdh_public_keys.keys()
+        ) or recipient_set != set(recipient_ecdh_signatures.keys()):
             raise ValueError("Mismatched recipient UUID sets in provided dictionaries")
 
         self._logger.info(
@@ -193,32 +191,56 @@ class EncryptionService:
         )
 
         try:
-            tasks = []
-            for recipient_uuid in recipient_set:
-                task = self.encrypt_message(
-                    message=message,
-                    sender_ed_private_key=sender_ed_private_key,
-                    recipient_ed_public_key=recipient_ed_public_keys[recipient_uuid],
-                    ephemeral_ecdh_private_key=ephemeral_ecdh_private_key,
-                    ephemeral_ecdh_public_key=ephemeral_ecdh_public_key,
-                    recipient_ecdh_public_key=recipient_ecdh_public_keys[recipient_uuid],
-                    recipient_ecdh_signature=recipient_ecdh_signatures[recipient_uuid],
-                )
-                tasks.append(task)
+            ephemeral_signature = await self._ed_signer.sign_string(
+                private_key_pem=sender_ed_private_key,
+                string=ephemeral_ecdh_public_key,
+            )
+            semaphore = asyncio.Semaphore(self._MAX_CONCURRENT_CHAT_ENCRYPTIONS)
 
-            results = await asyncio.gather(*tasks)
-
-            output = []
-            for idx, recipient_uuid in enumerate(recipient_set):
-                enc_result = results[idx]
-                output.append(
-                    EncryptMessageToChatResult(
-                        recipient_uuid=recipient_uuid,
-                        encrypted_message=enc_result.encrypted_message,
-                        ephemeral_signature=enc_result.ephemeral_signature,
-                        message_uuid=enc_result.message_uuid,
+            async def encrypt_for_recipient(
+                recipient_uuid: UUID,
+            ) -> EncryptMessageToChatResult:
+                async with semaphore:
+                    is_signature_valid, shared_key = await asyncio.gather(
+                        self._ed_signer.verify_signature(
+                            public_key_pem=recipient_ed_public_keys[recipient_uuid],
+                            string=recipient_ecdh_public_keys[recipient_uuid],
+                            signature=recipient_ecdh_signatures[recipient_uuid],
+                        ),
+                        self._ecdh_cipher.derive_shared_key(
+                            private_key_pem=ephemeral_ecdh_private_key,
+                            peer_public_key_pem=recipient_ecdh_public_keys[
+                                recipient_uuid
+                            ],
+                        ),
                     )
+                    if not is_signature_valid:
+                        raise SecurityError(
+                            "Recipient's ECDH key signature is invalid. "
+                            "Possible MITM attack or key compromise."
+                        )
+
+                    message_uuid = uuid.uuid7()
+                    encrypted_message = (
+                        await self._aes_cipher.encrypt_with_message_uuid(
+                            plaintext=message,
+                            key=shared_key,
+                            message_uuid=message_uuid,
+                        )
+                    )
+                    return EncryptMessageToChatResult(
+                        recipient_uuid=recipient_uuid,
+                        encrypted_message=encrypted_message,
+                        ephemeral_signature=ephemeral_signature,
+                        message_uuid=message_uuid,
+                    )
+
+            output = await asyncio.gather(
+                *(
+                    encrypt_for_recipient(recipient_uuid)
+                    for recipient_uuid in sorted(recipient_set, key=str)
                 )
+            )
 
             self._logger.info(
                 f"Successfully encrypted message for {len(output)} recipients",
@@ -277,7 +299,7 @@ class EncryptionService:
                 self._ecdh_cipher.derive_shared_key(
                     private_key_pem=recipient_ecdh_private_key,
                     peer_public_key_pem=ephemeral_ecdh_public_key,
-                )
+                ),
             )
 
             if not is_signature_valid:
@@ -337,7 +359,9 @@ class EncryptionService:
         if plaintext_size == 0:
             return 0
 
-        chunk_count = (plaintext_size + plaintext_chunk_size - 1) // plaintext_chunk_size
+        chunk_count = (
+            plaintext_size + plaintext_chunk_size - 1
+        ) // plaintext_chunk_size
         return plaintext_size + chunk_count * self.file_chunk_encryption_overhead
 
     def get_file_resume_position(
@@ -355,8 +379,8 @@ class EncryptionService:
             raise ValueError("Upload offset is outside encrypted file bounds")
         if uploaded_ciphertext_size == total_ciphertext_size:
             chunk_count = (
-                (plaintext_size + plaintext_chunk_size - 1) // plaintext_chunk_size
-            )
+                plaintext_size + plaintext_chunk_size - 1
+            ) // plaintext_chunk_size
             return chunk_count, plaintext_size
 
         encrypted_chunk_size = (
@@ -383,10 +407,13 @@ class EncryptionService:
         if not plaintext:
             raise ValueError("File chunk cannot be empty")
 
-        indexed_plaintext = chunk_index.to_bytes(
-            self._FILE_CHUNK_INDEX_SIZE,
-            byteorder="big",
-        ) + plaintext
+        indexed_plaintext = (
+            chunk_index.to_bytes(
+                self._FILE_CHUNK_INDEX_SIZE,
+                byteorder="big",
+            )
+            + plaintext
+        )
         return await self._aes_cipher.encrypt_bytes_with_message_uuid(
             plaintext=indexed_plaintext,
             key=context.key,
@@ -416,7 +443,7 @@ class EncryptionService:
         )
         if stored_index != chunk_index:
             raise SecurityError("File chunk index integrity check failed")
-        return indexed_plaintext[self._FILE_CHUNK_INDEX_SIZE:]
+        return indexed_plaintext[self._FILE_CHUNK_INDEX_SIZE :]
 
     def _create_file_metadata_payload(
         self,
@@ -475,7 +502,9 @@ class EncryptionService:
                 EncryptionService._validate_file_mime_type(file_mime_type),
             )
         except ValueError as error:
-            raise ValueError("File message contains invalid file name or MIME type") from error
+            raise ValueError(
+                "File message contains invalid file name or MIME type"
+            ) from error
 
     def _parse_file_metadata_payload(self, payload: str) -> FileMessageDescriptor:
         try:
