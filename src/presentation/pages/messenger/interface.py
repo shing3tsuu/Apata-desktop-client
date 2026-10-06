@@ -14,6 +14,7 @@ from src.adapters.database.structures import ContactStatusEnum
 from src.presentation.interactors.messenger import (
     AcceptContactRequestInteractor,
     BlacklistContactInteractor,
+    CreateChatInteractor,
     SearchContactsGlobalInteractor,
     SearchContactsLocalInteractor,
     SendContactRequestInteractor,
@@ -46,6 +47,7 @@ class MessengerInterface(QWidget):
         self._contacts: list[ContactCache] = []
         self._chats: list[ChatCache] = []
         self._search_task: asyncio.Task[None] | None = None
+        self._chat_creation_task: asyncio.Task[None] | None = None
         self._message_tasks: set[asyncio.Task[None]] = set()
         self._contact_action_tasks: set[asyncio.Task[None]] = set()
         self.setup_ui()
@@ -89,6 +91,9 @@ class MessengerInterface(QWidget):
         )
         self.contacts_panel.search_requested.connect(self._schedule_search)
         self.contacts_panel.search_cleared.connect(self._cancel_search)
+        self.contacts_panel.create_chat_requested.connect(
+            self._schedule_chat_creation
+        )
         self.messages_panel.text_message_send_requested.connect(
             self._schedule_text_message
         )
@@ -240,6 +245,45 @@ class MessengerInterface(QWidget):
         if self._search_task is not None and not self._search_task.done():
             self._search_task.cancel()
         self._search_task = None
+
+    def _schedule_chat_creation(self, name: str) -> None:
+        if (
+            self._chat_creation_task is not None
+            and not self._chat_creation_task.done()
+        ):
+            return
+        if self.main_window is None or self.main_window.container is None:
+            logger.warning("Cannot create a chat without application container")
+            self.contacts_panel.finish_chat_creation(False)
+            return
+
+        self.contacts_panel.set_chat_creation_busy(True)
+        self._chat_creation_task = asyncio.create_task(self._create_chat(name))
+
+    async def _create_chat(self, name: str) -> None:
+        current_task = asyncio.current_task()
+        try:
+            success, status_message, chat = await CreateChatInteractor()(
+                self.main_window.container,
+                name,
+            )
+            if not success or chat is None:
+                logger.warning("Failed to create chat: %s", status_message)
+                self.contacts_panel.finish_chat_creation(False)
+                return
+
+            self.contacts_panel.finish_chat_creation(True)
+            await self.refresh_from_state()
+            self.contacts_panel.select_conversation(chat)
+        except asyncio.CancelledError:
+            self.contacts_panel.finish_chat_creation(False)
+            raise
+        except Exception:
+            logger.exception("Unexpected chat creation error")
+            self.contacts_panel.finish_chat_creation(False)
+        finally:
+            if self._chat_creation_task is current_task:
+                self._chat_creation_task = None
 
     def _schedule_text_message(
         self,

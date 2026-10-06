@@ -142,3 +142,25 @@ Add a live integration scenario using the real API and production client interac
 Run the relevant client and server tests, Ruff, and mypy. Mark the task closed only after the unit and live integration scenarios pass against the real server contract.
 
 closed: true
+
+## Task 4 — Create Chats from the Messenger Sidebar
+
+Add an inline chat creation flow to the messenger sidebar. When the `CHATS` tab is active, show the existing `✚` action inside the right side of the search field. The action must remain hidden in the `CONTACTS` tab.
+
+Clicking `✚` opens a compact panel directly below the search field containing:
+
+- the regular-weight title `▛ C R E A T I N G  C H A T ▟`;
+- a chat-name input with both its placeholder and entered text centered;
+- a regular-weight `C R E A T E` button.
+
+Render the title, name input, and submit button as three equal-width and equal-height angled blocks. Their borders and text must all use the same dark-gray inactive-tab color, including while the name field is focused.
+
+Clicking anywhere outside the creation panel and its `✚` anchor closes the panel. Switching back to `CONTACTS` also closes it. The name input must reject blank values and enforce the server's 100-character limit.
+
+Connect the panel to a new messenger interactor that uses the existing authenticated `ChatHTTPService.create_chat` operation, persists the returned chat through the local `ChatService`, adds one `ChatCache` entry to `AppState`, and returns the created chat. On success, refresh the chat list, select the new chat, clear the input, and close the panel. Prevent duplicate submissions while a request is running and keep the panel open when creation fails.
+
+Keep responsibilities separated: chat creation business flow belongs in `src/presentation/interactors/messenger.py`; reusable button and field widgets belong in their existing messenger modules; the composed creation panel belongs in a dedicated messenger UI module. Do not change the server API or add participants in this task.
+
+Add focused tests for interactor persistence/cache behavior and failure behavior, then run the relevant tests, Ruff, and mypy.
+
+closed: true

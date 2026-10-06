@@ -11,6 +11,7 @@ from src.adapters.api.service import (
     MessageHTTPService,
 )
 from src.adapters.database.dto import (
+    AddChatDTO,
     AddContactDTO,
     AddMessageTextDTO,
     ChatDTO,
@@ -184,6 +185,71 @@ class SearchContactsGlobalInteractor:
 
         except Exception:
             return []
+
+
+class CreateChatInteractor:
+    async def __call__(
+        self,
+        container: AsyncContainer,
+        name: str,
+    ) -> tuple[bool, str, ChatCache | None]:
+        chat_name = name.strip()
+        if not chat_name:
+            return False, "CHAT NAME CANNOT BE EMPTY", None
+        if len(chat_name) > 100:
+            return False, "CHAT NAME CANNOT EXCEED 100 CHARACTERS", None
+
+        try:
+            async with container() as request_container:
+                app_state = await request_container.get(AppState)
+                token = app_state.token
+                local_user_id = app_state.local_user_id
+                server_user_id = app_state.server_user_id
+                if (
+                    token is None
+                    or local_user_id is None
+                    or server_user_id is None
+                ):
+                    return False, "CHAT CREATION PREREQUISITES MISSING", None
+
+                chat_http_service = await request_container.get(ChatHTTPService)
+                chat_service = await request_container.get(ChatService)
+                chat_http_service.token = token
+                server_chat = await chat_http_service.create_chat(chat_name)
+                if server_chat.owner_id != server_user_id:
+                    raise ValueError("Created chat owner does not match current user")
+
+                local_chat = await chat_service.add_chat(
+                    AddChatDTO(
+                        local_user_id=local_user_id,
+                        server_chat_id=server_chat.id,
+                        server_owner_id=server_chat.owner_id,
+                        name=server_chat.name,
+                        created_at=server_chat.created_at,
+                    )
+                )
+                cached_chat = ChatCache(
+                    id=local_chat.id,
+                    server_chat_id=local_chat.server_chat_id,
+                    server_owner_id=local_chat.server_owner_id,
+                    name=local_chat.name,
+                    created_at=local_chat.created_at,
+                )
+                existing_cache = next(
+                    (
+                        chat
+                        for chat in app_state.chats_cache
+                        if chat.server_chat_id == cached_chat.server_chat_id
+                    ),
+                    None,
+                )
+                if existing_cache is None:
+                    app_state.chats_cache.append(cached_chat)
+                else:
+                    cached_chat = existing_cache
+                return True, "SUCCESS", cached_chat
+        except Exception as error:
+            return False, str(error).upper(), None
 
 
 class SendContactRequestInteractor:

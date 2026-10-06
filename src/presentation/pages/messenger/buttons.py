@@ -288,6 +288,70 @@ class CreateChatButton(QWidget):
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "✚")
 
 
+class CreateChatSubmitButton(QWidget):
+    clicked = pyqtSignal()
+
+    def __init__(
+        self,
+        color: str,
+        color_background: str,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.color = color
+        self.color_background = color_background
+        self._busy = False
+        self.setFixedHeight(38)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("background: transparent;")
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.setCursor(
+            Qt.CursorShape.ArrowCursor
+            if busy
+            else Qt.CursorShape.PointingHandCursor
+        )
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if (
+            not self._busy
+            and event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        triangle_width = 8
+        path = QPainterPath()
+        path.moveTo(triangle_width, 0)
+        path.lineTo(0, self.height() / 2)
+        path.lineTo(triangle_width, self.height())
+        path.lineTo(self.width() - triangle_width, self.height())
+        path.lineTo(self.width(), self.height() / 2)
+        path.lineTo(self.width() - triangle_width, 0)
+        path.closeSubpath()
+
+        painter.fillPath(path, QColor(self.color_background))
+        painter.setPen(QPen(QColor(self.color), 2))
+        painter.drawPath(path)
+        painter.setPen(QColor(self.color))
+        painter.setFont(QFont("Roboto Condensed", 10, QFont.Weight.Normal))
+        painter.drawText(
+            self.rect(),
+            Qt.AlignmentFlag.AlignCenter,
+            "C R E A T E",
+        )
+
+
 class SendButton(QWidget):
     def __init__(
         self,

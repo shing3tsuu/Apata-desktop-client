@@ -165,6 +165,109 @@ class ConversationSearchField(QWidget):
         painter.drawPath(path)
 
 
+class ChatNameField(QLineEdit):
+    submitted = pyqtSignal(str)
+
+    def __init__(
+        self,
+        color_background: str,
+        color_border: str,
+        color_focus: str,
+        color_text: str,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.color_background = color_background
+        self.color_border = color_border
+        self.color_focus = color_focus
+        self.current_border_color = color_border
+        self.is_focused = False
+        self._border_timer: QTimer | None = None
+
+        self.setFixedHeight(38)
+        self.setMaxLength(100)
+        self.setPlaceholderText("CHAT NAME")
+        self.setFont(QFont("Roboto", 10))
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(
+            f"background: transparent; border: none; color: {color_text}; "
+            "padding: 0 14px;"
+        )
+        self.returnPressed.connect(lambda: self.submitted.emit(self.text()))
+
+    def focusInEvent(self, event):
+        self.is_focused = True
+        self._animate_border(self.color_focus)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        self.is_focused = False
+        self._animate_border(self.color_border)
+        super().focusOutEvent(event)
+
+    def mark_invalid(self) -> None:
+        self.setFocus()
+        self._animate_border(self.color_focus)
+
+    def _animate_border(self, target: str) -> None:
+        if self._border_timer is not None and self._border_timer.isActive():
+            self._border_timer.stop()
+        self._border_start = QColor(self.current_border_color)
+        self._border_end = QColor(target)
+        self._border_step = 0
+        self._border_timer = QTimer(self)
+        self._border_timer.timeout.connect(self._tick_border)
+        self._border_timer.start(15)
+
+    def _tick_border(self) -> None:
+        if self._border_step >= 12:
+            if self._border_timer is not None:
+                self._border_timer.stop()
+            self.current_border_color = self._border_end.name()
+            self.update()
+            return
+
+        ratio = self._border_step / 12
+        self.current_border_color = QColor(
+            int(
+                self._border_start.red()
+                + (self._border_end.red() - self._border_start.red()) * ratio
+            ),
+            int(
+                self._border_start.green()
+                + (self._border_end.green() - self._border_start.green()) * ratio
+            ),
+            int(
+                self._border_start.blue()
+                + (self._border_end.blue() - self._border_start.blue()) * ratio
+            ),
+        ).name()
+        self.update()
+        self._border_step += 1
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        triangle_width = 8
+        path = QPainterPath()
+        path.moveTo(triangle_width, 0)
+        path.lineTo(0, self.height() / 2)
+        path.lineTo(triangle_width, self.height())
+        path.lineTo(self.width() - triangle_width, self.height())
+        path.lineTo(self.width(), self.height() / 2)
+        path.lineTo(self.width() - triangle_width, 0)
+        path.closeSubpath()
+
+        painter.fillPath(path, QColor(self.color_background))
+        pen = QPen(QColor(self.current_border_color))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        painter.drawPath(path)
+        painter.end()
+        super().paintEvent(event)
+
+
 class AttachPreview(QWidget):
     removed = pyqtSignal()
 

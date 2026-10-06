@@ -17,6 +17,7 @@ from src.providers.cache import ChatCache, ContactCache
 
 from .buttons import ConversationTabButton
 from .contacts import ContactList, Conversation, conversation_name
+from .creation import ChatCreationPanel
 from .fields import MessageField
 from .messages import MessageBubble, MessagesView
 from .search import ConversationSearchPanel
@@ -29,6 +30,7 @@ from .theme import (
     COLOR_PANEL_BACKGROUND,
     COLOR_SCROLLBAR_HANDLE,
     COLOR_SCROLLBAR_TRACK,
+    COLOR_TEXT,
 )
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -96,7 +98,7 @@ class ContactsPanel(QWidget):
     contact_action_requested = pyqtSignal(str, object)
     search_requested = pyqtSignal(str, str, bool)
     search_cleared = pyqtSignal()
-    create_chat_requested = pyqtSignal()
+    create_chat_requested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -158,8 +160,18 @@ class ContactsPanel(QWidget):
         )
         self.search_panel.search_requested.connect(self._forward_search_request)
         self.search_panel.search_cleared.connect(self._clear_search)
-        self.search_panel.create_chat_requested.connect(self.create_chat_requested.emit)
+        self.search_panel.create_chat_requested.connect(self._toggle_chat_creation)
         layout.addWidget(self.search_panel)
+
+        self.chat_creation_panel = ChatCreationPanel(
+            color_inactive=self.color_third,
+            color_background=COLOR_PANEL_BACKGROUND,
+            color_text=COLOR_TEXT,
+        )
+        self.chat_creation_panel.create_requested.connect(
+            self.create_chat_requested.emit
+        )
+        layout.addWidget(self.chat_creation_panel)
 
         # Скролл-зона для списка контактов
         scroll = QScrollArea()
@@ -212,8 +224,27 @@ class ContactsPanel(QWidget):
         self.contacts_tab.set_active(section == "contacts")
         self.chats_tab.set_active(section == "chats")
         self.search_panel.set_mode(section)
+        if section != "chats":
+            self.chat_creation_panel.close_panel()
         self._render_active_section()
         self.search_cleared.emit()
+
+    def _toggle_chat_creation(self) -> None:
+        if self._active_section != "chats":
+            return
+        if self.chat_creation_panel.isVisible():
+            self.chat_creation_panel.close_panel()
+            return
+        self.chat_creation_panel.open_panel(self.search_panel.create_chat_button)
+
+    def set_chat_creation_busy(self, busy: bool) -> None:
+        self.chat_creation_panel.set_busy(busy)
+
+    def finish_chat_creation(self, success: bool) -> None:
+        if success:
+            self.chat_creation_panel.complete_creation()
+        else:
+            self.chat_creation_panel.set_busy(False)
 
     def _forward_search_request(self, query: str, global_search: bool) -> None:
         self.search_requested.emit(self._active_section, query, global_search)

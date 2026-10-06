@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 
 from src.adapters.api.dto import (
+    ChatDTO as APIChatDTO,
     ChatParticipantDTO,
     ContactPageDTO,
     ContactPublicDTO,
@@ -35,6 +36,7 @@ from src.presentation.interactors.login import SynchronizeContactsInteractor
 from src.presentation.interactors.messenger import (
     AcceptContactRequestInteractor,
     BlacklistContactInteractor,
+    CreateChatInteractor,
     SearchContactsGlobalInteractor,
     SendChatTextMessageInteractor,
     SendContactRequestInteractor,
@@ -222,6 +224,94 @@ async def test_search_contacts_global_interactor_requires_token() -> None:
 
     assert await SearchContactsGlobalInteractor()(container, "ghost") == []
     assert contact_http_service.queries == []
+
+
+@pytest.mark.asyncio
+async def test_create_chat_interactor_persists_and_caches_created_chat() -> None:
+    local_user_id = uuid4()
+    server_user_id = uuid4()
+    server_chat_id = uuid4()
+    local_chat_id = uuid4()
+    created_at = datetime.now(timezone.utc)
+    server_chat = APIChatDTO(
+        id=server_chat_id,
+        owner_id=server_user_id,
+        name="Night shift",
+        created_at=created_at,
+    )
+    local_chat = ChatDTO.model_construct(
+        id=local_chat_id,
+        local_user_id=local_user_id,
+        server_chat_id=server_chat_id,
+        server_owner_id=server_user_id,
+        name="Night shift",
+        created_at=created_at,
+    )
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.server_user_id = server_user_id
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.create_chat = AsyncMock(return_value=server_chat)
+    chat_service = MagicMock(spec=ChatService)
+    chat_service.add_chat = AsyncMock(return_value=local_chat)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+                ChatService: chat_service,
+            }
+        ),
+    )
+
+    success, message, cached_chat = await CreateChatInteractor()(
+        container,
+        "  Night shift  ",
+    )
+
+    assert success is True
+    assert message == "SUCCESS"
+    assert cached_chat is not None
+    assert cached_chat.id == local_chat_id
+    assert cached_chat.server_chat_id == server_chat_id
+    assert app_state.chats_cache == [cached_chat]
+    assert chat_http_service.token == "access-token"
+    chat_http_service.create_chat.assert_awaited_once_with("Night shift")
+    saved_request = chat_service.add_chat.await_args.args[0]
+    assert saved_request.local_user_id == local_user_id
+    assert saved_request.server_chat_id == server_chat_id
+    assert saved_request.server_owner_id == server_user_id
+
+
+@pytest.mark.asyncio
+async def test_create_chat_interactor_does_not_cache_failed_creation() -> None:
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = uuid4()
+    app_state.server_user_id = uuid4()
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.create_chat = AsyncMock(
+        side_effect=APIError("Chat creation failed")
+    )
+    chat_service = MagicMock(spec=ChatService)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+                ChatService: chat_service,
+            }
+        ),
+    )
+
+    result = await CreateChatInteractor()(container, "Night shift")
+
+    assert result == (False, "CHAT CREATION FAILED", None)
+    chat_service.add_chat.assert_not_awaited()
+    assert app_state.chats_cache == []
 
 
 @pytest.mark.asyncio
