@@ -1,9 +1,14 @@
 import logging
-from typing import AsyncIterable
+from typing import Any, AsyncIterable
 
 from dishka import Provider, Scope, provide
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from src.adapters.api.dao import (
     AuthHTTPDAO,
@@ -60,9 +65,42 @@ from src.adapters.encryption.storage import EncryptedKeyStorage
 
 from .state import AppState
 
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+
+
+def _configure_sqlite_connection(
+    dbapi_connection: Any,
+    _connection_record: Any,
+) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
+
+def create_local_database_engine(database_url: str) -> AsyncEngine:
+    engine = create_async_engine(
+        database_url,
+        connect_args={
+            "check_same_thread": False,
+            "timeout": SQLITE_BUSY_TIMEOUT_MS / 1000,
+        },
+        pool_pre_ping=True,
+    )
+    event.listen(
+        engine.sync_engine,
+        "connect",
+        _configure_sqlite_connection,
+    )
+    return engine
+
 
 class StateProvider(Provider):
     app_state = provide(AppState, scope=Scope.APP)
+
 
 class AppProvider(Provider):
     def __init__(
@@ -250,32 +288,27 @@ class AppProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    async def database(self) -> async_sessionmaker:
+    async def database(self) -> async_sessionmaker[AsyncSession]:
         try:
             database_url = "sqlite+aiosqlite:///apata.db"
-
-            engine = create_async_engine(
-                database_url,
-                connect_args={"check_same_thread": False},
-                poolclass=StaticPool,
-            )
+            engine = create_local_database_engine(database_url)
 
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
 
-            logging.info("Database tables created successfully")
+            self.logger.info("Database tables created successfully")
 
             return async_sessionmaker(
                 engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
             )
 
-        except Exception as e:
-            logging.error(f"Failed to create database: {e}")
+        except Exception:
+            self.logger.exception("Failed to create local database")
             raise
 
     @provide(scope=Scope.REQUEST)
     async def new_connection(
-        self, sessionmaker: async_sessionmaker
+        self, sessionmaker: async_sessionmaker[AsyncSession]
     ) -> AsyncIterable[AsyncSession]:
         async with sessionmaker() as session:
             yield session

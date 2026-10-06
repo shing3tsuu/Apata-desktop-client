@@ -193,3 +193,34 @@ If the server response is received but local persistence fails, retain enough re
 Add focused tests for validation, authentication prerequisites, owner mismatch, successful local persistence and caching, duplicate names with distinct UUIDs, server failure without local mutation, local persistence failure without a second HTTP request, and the UI in-flight submission guard. Run the relevant tests, Ruff, and mypy before closing the task.
 
 closed: true
+
+## Task 7 — Prevent Concurrent SQLite Session Conflicts
+
+Fix the local database race where a successful chat creation can overlap with the immediate `chat_changed` realtime synchronization and produce `sqlite3.OperationalError: cannot commit transaction - SQL statements in progress`.
+
+The production client currently creates request-scoped `AsyncSession` instances over a `StaticPool`. For a file-backed SQLite database, this forces otherwise independent request sessions to share one physical connection. A local write and a realtime read may therefore commit against the same connection while another statement is still active.
+
+Implement the following database configuration:
+
+1. remove `StaticPool` from the file-backed production SQLite engine and use SQLAlchemy's normal async pool so concurrent request sessions receive independent connections;
+2. enable SQLite WAL journal mode so a realtime reader does not block a short local write transaction;
+3. configure a finite SQLite busy timeout so short lock contention waits instead of failing immediately;
+4. retain foreign-key enforcement for every connection;
+5. keep request-scoped sessions and the existing service/DAO boundaries;
+6. do not serialize the whole application, delay realtime notifications, retry `POST /chats`, or suppress database exceptions.
+
+Add a regression test that keeps a read cursor open on one session while a second session writes and commits through another connection. Verify that WAL and the busy timeout are active and that the write succeeds without a statement-in-progress or database-locked error.
+
+Separating read-only transaction handling from the existing `error_handler` commit behavior is a worthwhile later cleanup, but it is outside this task unless the connection and WAL fix proves insufficient.
+
+The running client must be restarted after this change so its existing engine and pool are replaced.
+
+### Implementation notes
+
+- The production file-backed SQLite engine now uses SQLAlchemy's normal async connection pool instead of `StaticPool`.
+- A connection hook enables WAL, a 30-second busy timeout, and foreign-key enforcement for every pooled connection.
+- The regression test keeps a streaming read cursor open in one session while another session inserts and commits successfully, then verifies the committed row and active PRAGMA values.
+- The new regression test, chat API tests, Ruff, and mypy pass. The broader database run has 83 passing tests and two unrelated pre-existing `LocalUserService` expectation failures.
+- The restarted client successfully repeated chat creation and realtime synchronization without the SQLite commit error.
+
+closed: true
