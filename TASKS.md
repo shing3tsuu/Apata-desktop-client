@@ -164,3 +164,32 @@ Keep responsibilities separated: chat creation business flow belongs in `src/pre
 Add focused tests for interactor persistence/cache behavior and failure behavior, then run the relevant tests, Ruff, and mypy.
 
 closed: true
+
+## Task 5 — Finalize the Chat Creation Interactor
+
+Finalize and verify the chat creation business flow. Task 4 introduced a preliminary `CreateChatInteractor` and connected the messenger creation panel to it, so this task must audit and improve that implementation rather than introduce a duplicate interactor or a parallel creation path.
+
+The interactor must:
+
+1. trim and validate a non-empty chat name with the server's 100-character limit;
+2. require an authenticated token and both local and server user IDs from `AppState`;
+3. call the existing `ChatHTTPService.create_chat` operation exactly once for a normal submission;
+4. validate that the returned owner ID matches the authenticated server user;
+5. persist the returned server chat through the existing local `ChatService` using its server UUID as identity;
+6. add exactly one matching `ChatCache` entry to `AppState` without deduplicating by name;
+7. return the created cached chat so the UI can refresh the chat list and select it;
+8. leave local storage and cache unchanged when validation or the server request fails.
+
+Repeated chat names are valid. Neither the server nor the client may treat a name as a unique key; chats are identified exclusively by their server UUID and local UUID.
+
+Keep the existing UI connection from the `C R E A T E` button and retain its in-flight submission guard. Do not add participants, chat settings, or another server endpoint in this task.
+
+### Failure and retry considerations
+
+The normal UI path must prevent rapid double submission. Do not automatically repeat `POST /chats` after an uncertain network outcome: the server may have committed the chat even if the response was lost, and retrying a non-idempotent create request could produce a second chat with a different UUID. If reliable automatic retry is required later, add an explicit client-generated idempotency key and server-side idempotency contract as a separate task. Repeated names alone cannot be used to recover an uncertain request because they are intentionally allowed.
+
+If the server response is received but local persistence fails, retain enough response context for logging and allow normal chat synchronization to recover the server chat. Do not issue another create request merely to repair local state.
+
+Add focused tests for validation, authentication prerequisites, owner mismatch, successful local persistence and caching, duplicate names with distinct UUIDs, server failure without local mutation, local persistence failure without a second HTTP request, and the UI in-flight submission guard. Run the relevant tests, Ruff, and mypy before closing the task.
+
+closed: true

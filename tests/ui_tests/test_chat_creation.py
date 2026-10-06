@@ -1,11 +1,14 @@
+import asyncio
 import os
+from typing import cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
+from src.presentation.pages.messenger.interface import MessengerInterface
 from src.presentation.pages.messenger.panels import ContactsPanel
 
 
@@ -27,6 +30,13 @@ def _panel() -> ContactsPanel:
     return panel
 
 
+def _click(widget: object) -> None:
+    QTest.mouseClick(  # type: ignore[call-overload]
+        cast(QWidget, widget),
+        Qt.MouseButton.LeftButton,
+    )
+
+
 def test_chat_creation_panel_opens_submits_and_closes_outside() -> None:
     application = _application()
     panel = _panel()
@@ -34,14 +44,11 @@ def test_chat_creation_panel_opens_submits_and_closes_outside() -> None:
     panel.create_chat_requested.connect(created_names.append)
 
     assert panel.search_panel.create_chat_button.isVisible() is False
-    QTest.mouseClick(panel.chats_tab, Qt.MouseButton.LeftButton)
+    _click(panel.chats_tab)
     application.processEvents()
     assert panel.search_panel.create_chat_button.isVisible() is True
 
-    QTest.mouseClick(
-        panel.search_panel.create_chat_button,
-        Qt.MouseButton.LeftButton,
-    )
+    _click(panel.search_panel.create_chat_button)
     application.processEvents()
     assert panel.chat_creation_panel.isVisible() is True
     assert panel.chat_creation_panel.name_field.alignment() == (
@@ -55,13 +62,10 @@ def test_chat_creation_panel_opens_submits_and_closes_outside() -> None:
     assert len(block_widths) == 1
 
     panel.chat_creation_panel.name_field.setText("Night shift")
-    QTest.mouseClick(
-        panel.chat_creation_panel.create_button,
-        Qt.MouseButton.LeftButton,
-    )
+    _click(panel.chat_creation_panel.create_button)
     assert created_names == ["Night shift"]
 
-    QTest.mouseClick(panel.chats_tab, Qt.MouseButton.LeftButton)
+    _click(panel.chats_tab)
     application.processEvents()
     assert panel.chat_creation_panel.isVisible() is False
     panel.close()
@@ -71,16 +75,31 @@ def test_switching_to_contacts_closes_chat_creation_panel() -> None:
     application = _application()
     panel = _panel()
 
-    QTest.mouseClick(panel.chats_tab, Qt.MouseButton.LeftButton)
-    QTest.mouseClick(
-        panel.search_panel.create_chat_button,
-        Qt.MouseButton.LeftButton,
-    )
+    _click(panel.chats_tab)
+    _click(panel.search_panel.create_chat_button)
     application.processEvents()
     assert panel.chat_creation_panel.isVisible() is True
 
-    QTest.mouseClick(panel.contacts_tab, Qt.MouseButton.LeftButton)
+    _click(panel.contacts_tab)
     application.processEvents()
     assert panel.chat_creation_panel.isVisible() is False
     assert panel.search_panel.create_chat_button.isVisible() is False
     panel.close()
+
+
+class _PendingTask:
+    def done(self) -> bool:
+        return False
+
+
+def test_chat_creation_ignores_submission_while_request_is_in_flight() -> None:
+    application = _application()
+    interface = MessengerInterface()
+    pending_task = cast(asyncio.Task[None], _PendingTask())
+    interface._chat_creation_task = pending_task
+
+    interface._schedule_chat_creation("Second chat")
+
+    assert interface._chat_creation_task is pending_task
+    interface.close()
+    application.processEvents()

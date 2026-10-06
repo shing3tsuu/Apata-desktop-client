@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
@@ -24,6 +25,8 @@ from src.adapters.database.structures import ContactStatusEnum, MessageContentTy
 from src.exceptions import APIError
 from src.providers.cache import ChatCache, ContactCache, MessageCache
 from src.providers.state import AppState
+
+logger = logging.getLogger(__name__)
 
 
 class RealtimeSynchronizationStep(Protocol):
@@ -205,11 +208,7 @@ class CreateChatInteractor:
                 token = app_state.token
                 local_user_id = app_state.local_user_id
                 server_user_id = app_state.server_user_id
-                if (
-                    token is None
-                    or local_user_id is None
-                    or server_user_id is None
-                ):
+                if token is None or local_user_id is None or server_user_id is None:
                     return False, "CHAT CREATION PREREQUISITES MISSING", None
 
                 chat_http_service = await request_container.get(ChatHTTPService)
@@ -217,17 +216,37 @@ class CreateChatInteractor:
                 chat_http_service.token = token
                 server_chat = await chat_http_service.create_chat(chat_name)
                 if server_chat.owner_id != server_user_id:
+                    logger.error(
+                        "Created chat owner does not match current user: "
+                        "server_chat_id=%s owner_id=%s current_user_id=%s",
+                        server_chat.id,
+                        server_chat.owner_id,
+                        server_user_id,
+                    )
                     raise ValueError("Created chat owner does not match current user")
 
-                local_chat = await chat_service.add_chat(
-                    AddChatDTO(
-                        local_user_id=local_user_id,
-                        server_chat_id=server_chat.id,
-                        server_owner_id=server_chat.owner_id,
-                        name=server_chat.name,
-                        created_at=server_chat.created_at,
+                try:
+                    local_chat = await chat_service.add_chat(
+                        AddChatDTO(
+                            local_user_id=local_user_id,
+                            server_chat_id=server_chat.id,
+                            server_owner_id=server_chat.owner_id,
+                            name=server_chat.name,
+                            created_at=server_chat.created_at,
+                        )
                     )
-                )
+                except Exception as error:
+                    logger.exception(
+                        "Chat was created on the server but local persistence "
+                        "failed: server_chat_id=%s",
+                        server_chat.id,
+                    )
+                    return (
+                        False,
+                        f"LOCAL CHAT PERSISTENCE FAILED: {str(error).upper()}",
+                        None,
+                    )
+
                 cached_chat = ChatCache(
                     id=local_chat.id,
                     server_chat_id=local_chat.server_chat_id,
