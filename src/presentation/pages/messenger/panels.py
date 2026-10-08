@@ -15,7 +15,8 @@ from PyQt6.QtWidgets import (
 from src.adapters.database.structures import ContactStatusEnum, MessageContentTypeEnum
 from src.providers.cache import ChatCache, ContactCache
 
-from .buttons import ConversationTabButton
+from .buttons import AddChatParticipantButton, ConversationTabButton
+from .chat_members import ChatMembersPanel
 from .contacts import ContactList, Conversation, conversation_name
 from .creation import ChatCreationPanel
 from .fields import MessageField
@@ -96,6 +97,8 @@ class PanelDivider(QWidget):
 class ContactsPanel(QWidget):
     conversation_selected = pyqtSignal(object)
     contact_action_requested = pyqtSignal(str, object)
+    chat_members_requested = pyqtSignal(object, object)
+    chat_members_panel_close_requested = pyqtSignal()
     search_requested = pyqtSignal(str, str, bool)
     search_cleared = pyqtSignal()
     create_chat_requested = pyqtSignal(str)
@@ -196,6 +199,9 @@ class ContactsPanel(QWidget):
         self.contact_list.contact_action_requested.connect(
             self.contact_action_requested.emit
         )
+        self.contact_list.chat_members_requested.connect(
+            self.chat_members_requested.emit
+        )
         scroll.setWidget(self.contact_list)
 
         layout.addWidget(scroll, stretch=1)
@@ -226,6 +232,7 @@ class ContactsPanel(QWidget):
         self.search_panel.set_mode(section)
         if section != "chats":
             self.chat_creation_panel.close_panel()
+            self.chat_members_panel_close_requested.emit()
         self._render_active_section()
         self.search_cleared.emit()
 
@@ -272,9 +279,16 @@ class ContactsPanel(QWidget):
     def refresh_conversation(self, conversation: Conversation) -> None:
         self.contact_list.refresh_conversation(conversation)
 
+    def chat_members_button(
+        self,
+        chat: ChatCache,
+    ) -> AddChatParticipantButton | None:
+        return self.contact_list.chat_members_button(chat)
+
 
 class MessagesPanel(QWidget):
     text_message_send_requested = pyqtSignal(object, object, str)
+    chat_participant_add_requested = pyqtSignal(object, object)
 
     def __init__(
         self,
@@ -300,6 +314,9 @@ class MessagesPanel(QWidget):
         self.color_border = color_border
         self.color_divider = color_divider
         self.selected_conversation: Conversation | None = None
+        self._available_contacts: list[ContactCache] = []
+        self._current_user_id: UUID | None = None
+        self._chat_members_anchor: AddChatParticipantButton | None = None
         self._pending_text_bubbles: dict[UUID, MessageBubble] = {}
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._setup_ui()
@@ -346,7 +363,52 @@ class MessagesPanel(QWidget):
 
         self.setLayout(layout)
 
-    def show_conversation(self, conversation: Conversation | None) -> None:
+        self.chat_members_panel = ChatMembersPanel(
+            color_primary=self.color_primary,
+            color_border=self.color_border,
+            color_background=COLOR_PANEL_BACKGROUND,
+            color_text=COLOR_TEXT,
+            color_scrollbar=COLOR_SCROLLBAR_HANDLE,
+            parent=self,
+        )
+        self.chat_members_panel.add_requested.connect(
+            self.chat_participant_add_requested.emit
+        )
+        self.chat_members_panel.closed.connect(self._on_chat_members_panel_closed)
+
+    def set_available_contacts(
+        self,
+        contacts: list[ContactCache],
+        current_user_id: UUID | None = None,
+    ) -> None:
+        self._available_contacts = contacts
+        self._current_user_id = current_user_id
+        if isinstance(self.selected_conversation, ChatCache):
+            self.chat_members_panel.update_context(
+                self.selected_conversation,
+                contacts,
+                current_user_id,
+            )
+
+    def show_conversation(
+        self,
+        conversation: Conversation | None,
+        *,
+        preserve_chat_members_panel: bool = False,
+    ) -> None:
+        previous = self.selected_conversation
+        same_chat = (
+            isinstance(previous, ChatCache)
+            and isinstance(conversation, ChatCache)
+            and previous.server_chat_id == conversation.server_chat_id
+        )
+        keep_panel_open = (
+            preserve_chat_members_panel
+            and same_chat
+            and self.chat_members_panel.isVisible()
+        )
+        if not keep_panel_open:
+            self.chat_members_panel.close_panel()
         self.selected_conversation = conversation
         self._pending_text_bubbles.clear()
         if isinstance(conversation, ContactCache):
@@ -371,6 +433,14 @@ class MessagesPanel(QWidget):
             title = "SELECT A CONVERSATION"
         self.conversation_title.set_leading_icon(leading_icon)
         self.conversation_title.set_title(title)
+        if isinstance(conversation, ChatCache) and keep_panel_open:
+            self.chat_members_panel.update_context(
+                conversation,
+                self._available_contacts,
+                self._current_user_id,
+            )
+            self._position_chat_members_panel()
+            self.chat_members_panel.raise_()
         message_list = self.messages_view.message_list
         message_list.clear_messages()
         if conversation is None:
@@ -396,6 +466,86 @@ class MessagesPanel(QWidget):
             bubble.context_action.connect(self._handle_context_action)
             bubble.delete_requested.connect(self._delete_message)
         QTimer.singleShot(0, self.messages_view._smooth_scroll_to_bottom)
+
+    def finish_chat_participant_addition(
+        self,
+        contact: ContactCache,
+        success: bool,
+        failure_message: str | None = None,
+    ) -> None:
+        self.chat_members_panel.finish_add(
+            contact,
+            success,
+            failure_message,
+        )
+
+    def toggle_chat_members_panel(
+        self,
+        chat: ChatCache,
+        anchor: AddChatParticipantButton,
+    ) -> None:
+        conversation = self.selected_conversation
+        if (
+            not isinstance(conversation, ChatCache)
+            or conversation.server_chat_id != chat.server_chat_id
+        ):
+            return
+        previous_anchor = self._chat_members_anchor
+        if previous_anchor is not None and previous_anchor is not anchor:
+            previous_anchor.set_active(False)
+        self._chat_members_anchor = anchor
+        self._position_chat_members_panel()
+        self.chat_members_panel.toggle(
+            chat,
+            self._available_contacts,
+            self._current_user_id,
+            anchor,
+        )
+        anchor.set_active(self.chat_members_panel.isVisible())
+
+    def reanchor_chat_members_panel(
+        self,
+        chat: ChatCache,
+        anchor: AddChatParticipantButton,
+    ) -> None:
+        if (
+            not self.chat_members_panel.isVisible()
+            or not isinstance(self.selected_conversation, ChatCache)
+            or self.selected_conversation.server_chat_id != chat.server_chat_id
+        ):
+            return
+        self._chat_members_anchor = anchor
+        self.chat_members_panel.set_anchor_widget(anchor)
+        anchor.set_active(True)
+
+    def close_chat_members_panel(self) -> None:
+        self.chat_members_panel.close_panel()
+
+    def _on_chat_members_panel_closed(self) -> None:
+        anchor = self._chat_members_anchor
+        self._chat_members_anchor = None
+        if anchor is None:
+            return
+        try:
+            anchor.set_active(False)
+        except RuntimeError:
+            pass
+
+    def _position_chat_members_panel(self) -> None:
+        panel_width = max(210, min(300, self.width() * 3 // 14))
+        top = 84
+        bottom_margin = max(68, self.message_field.height() + 8)
+        panel_height = max(180, min(360, self.height() - top - bottom_margin))
+        self.chat_members_panel.setGeometry(
+            0,
+            top,
+            panel_width,
+            panel_height,
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._position_chat_members_panel()
 
     def _on_message_sent(self, text: str) -> None:
         conversation = self.selected_conversation

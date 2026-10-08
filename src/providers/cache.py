@@ -50,3 +50,4 @@ class ChatCache:
     name: str | None
     created_at: datetime | None
     messages: list[MessageCache] = field(default_factory=list)
+    participants: list[ContactCache] = field(default_factory=list)

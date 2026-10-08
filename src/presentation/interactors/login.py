@@ -981,6 +981,7 @@ class CacheConversationsInteractor:
                     ]
                 contact_cache: list[ContactCache] = []
                 chat_cache: list[ChatCache] = []
+                cached_contacts_by_id: dict[UUID, ContactCache] = {}
 
                 for contact in contacts:
                     messages = await message_service.get_recent_messages(
@@ -988,21 +989,19 @@ class CacheConversationsInteractor:
                         contact_id=contact.id,
                         limit=10,
                     )
-                    contact_cache.append(
-                        ContactCache(
-                            id=contact.id,
-                            server_user_id=contact.server_user_id,
-                            username=contact.username,
-                            status=contact.status,
-                            last_seen=contact.last_seen,
-                            online=contact.online,
-                            ed_public_key=contact.ed_public_key,
-                            ecdh_public_key=contact.ecdh_public_key,
-                            messages=[
-                                self._cache_message(message) for message in messages
-                            ],
-                        )
+                    cached_contact = ContactCache(
+                        id=contact.id,
+                        server_user_id=contact.server_user_id,
+                        username=contact.username,
+                        status=contact.status,
+                        last_seen=contact.last_seen,
+                        online=contact.online,
+                        ed_public_key=contact.ed_public_key,
+                        ecdh_public_key=contact.ecdh_public_key,
+                        messages=[self._cache_message(message) for message in messages],
                     )
+                    contact_cache.append(cached_contact)
+                    cached_contacts_by_id[contact.id] = cached_contact
 
                 for chat in chats:
                     messages = await message_service.get_recent_messages(
@@ -1010,6 +1009,7 @@ class CacheConversationsInteractor:
                         chat_id=chat.id,
                         limit=10,
                     )
+                    participants = await chat_service.get_chat_participants(chat.id)
                     chat_cache.append(
                         ChatCache(
                             id=chat.id,
@@ -1019,6 +1019,11 @@ class CacheConversationsInteractor:
                             created_at=chat.created_at,
                             messages=[
                                 self._cache_message(message) for message in messages
+                            ],
+                            participants=[
+                                cached_contacts_by_id[participant.id]
+                                for participant in participants
+                                if participant.id in cached_contacts_by_id
                             ],
                         )
                     )

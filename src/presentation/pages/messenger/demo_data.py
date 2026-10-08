@@ -68,6 +68,7 @@ def build_demo_conversations() -> tuple[list[ContactCache], list[ChatCache]]:
             server_owner_id=None,
             name="NIGHT SHIFT",
             created_at=now,
+            participants=contacts,
         )
     ]
     return contacts, chats

@@ -13,6 +13,8 @@ from src.adapters.api.service import (
 )
 from src.adapters.database.dto import (
     AddChatDTO,
+    AddChatEventDTO,
+    AddChatParticipantDTO,
     AddContactDTO,
     AddMessageTextDTO,
     ChatDTO,
@@ -21,7 +23,11 @@ from src.adapters.database.dto import (
     RequestContactDTO,
 )
 from src.adapters.database.service import ChatService, ContactService, MessageService
-from src.adapters.database.structures import ContactStatusEnum, MessageContentTypeEnum
+from src.adapters.database.structures import (
+    ChatEventTypeEnum,
+    ContactStatusEnum,
+    MessageContentTypeEnum,
+)
 from src.exceptions import APIError
 from src.providers.cache import ChatCache, ContactCache, MessageCache
 from src.providers.state import AppState
@@ -267,6 +273,175 @@ class CreateChatInteractor:
                 else:
                     cached_chat = existing_cache
                 return True, "SUCCESS", cached_chat
+        except Exception as error:
+            return False, str(error).upper(), None
+
+
+class AddChatParticipantInteractor:
+    async def __call__(
+        self,
+        container: AsyncContainer,
+        chat_cache: ChatCache,
+        contact_cache: ContactCache,
+    ) -> tuple[bool, str, ContactCache | None]:
+        if contact_cache.status is not ContactStatusEnum.ACCEPTED:
+            return False, "ONLY ACCEPTED CONTACTS CAN BE ADDED TO CHATS", None
+        if any(
+            participant.server_user_id == contact_cache.server_user_id
+            for participant in chat_cache.participants
+        ):
+            return False, "CONTACT IS ALREADY A CHAT PARTICIPANT", None
+
+        try:
+            async with container() as request_container:
+                app_state = await request_container.get(AppState)
+                token = app_state.token
+                local_user_id = app_state.local_user_id
+                server_user_id = app_state.server_user_id
+                if token is None or local_user_id is None or server_user_id is None:
+                    return False, "CHAT PARTICIPANT PREREQUISITES MISSING", None
+                if contact_cache.server_user_id == server_user_id:
+                    return False, "CURRENT USER CANNOT BE ADDED AS A CONTACT", None
+
+                current_chat = next(
+                    (
+                        chat
+                        for chat in app_state.chats_cache
+                        if chat.server_chat_id == chat_cache.server_chat_id
+                    ),
+                    None,
+                )
+                if current_chat is None or current_chat.id != chat_cache.id:
+                    return False, "CHAT CACHE IS NOT CURRENT", None
+
+                current_contact = next(
+                    (
+                        contact
+                        for contact in app_state.contacts_cache
+                        if contact.server_user_id == contact_cache.server_user_id
+                    ),
+                    None,
+                )
+                if current_contact is None or current_contact.id != contact_cache.id:
+                    return False, "CONTACT CACHE IS NOT CURRENT", None
+                if current_contact.status is not ContactStatusEnum.ACCEPTED:
+                    return False, "ONLY ACCEPTED CONTACTS CAN BE ADDED TO CHATS", None
+
+                chat_http_service = await request_container.get(ChatHTTPService)
+                chat_service = await request_container.get(ChatService)
+                contact_service = await request_container.get(ContactService)
+
+                local_chat = await chat_service.get_chat_by_id(current_chat.id)
+                if (
+                    local_chat.local_user_id != local_user_id
+                    or local_chat.server_chat_id != current_chat.server_chat_id
+                ):
+                    return False, "CHAT CACHE DOES NOT MATCH LOCAL CHAT", None
+
+                local_contact = (
+                    await contact_service.get_contact_by_server_user_id(
+                        local_user_id,
+                        current_contact.server_user_id,
+                    )
+                )
+                if local_contact is None or local_contact.id != current_contact.id:
+                    return False, "CONTACT CACHE DOES NOT MATCH LOCAL CONTACT", None
+                if local_contact.status is not ContactStatusEnum.ACCEPTED:
+                    return False, "ONLY ACCEPTED CONTACTS CAN BE ADDED TO CHATS", None
+
+                existing_participant = await chat_service.get_participant(
+                    local_chat.id,
+                    local_contact.id,
+                )
+                if existing_participant is not None and existing_participant.left_at is None:
+                    return False, "CONTACT IS ALREADY A CHAT PARTICIPANT", None
+
+                chat_http_service.token = token
+                change = await chat_http_service.add_participant(
+                    current_chat.server_chat_id,
+                    current_contact.server_user_id,
+                )
+                participant = change.participant
+                event = change.event
+                if (
+                    participant.chat_id != current_chat.server_chat_id
+                    or participant.user_id != current_contact.server_user_id
+                    or participant.invited_by_user_id != server_user_id
+                    or participant.left_at is not None
+                    or event.chat_id != current_chat.server_chat_id
+                    or event.user_id != server_user_id
+                    or event.target_user_id != current_contact.server_user_id
+                ):
+                    raise ValueError("Chat participant response does not match request")
+
+                try:
+                    event_type = ChatEventTypeEnum(event.event_type)
+                except ValueError as error:
+                    raise ValueError("Unsupported chat participant event type") from error
+                if event_type not in {
+                    ChatEventTypeEnum.MEMBER_ADDED,
+                    ChatEventTypeEnum.MEMBER_JOINED,
+                }:
+                    raise ValueError("Unsupported chat participant event type")
+
+                try:
+                    await chat_service.add_participant(
+                        AddChatParticipantDTO(
+                            chat_id=local_chat.id,
+                            contact_id=local_contact.id,
+                            joined_at=participant.joined_at,
+                            left_at=participant.left_at,
+                        ),
+                        create_join_event=False,
+                    )
+                    await chat_service.add_chat_event(
+                        AddChatEventDTO(
+                            chat_id=local_chat.id,
+                            server_event_id=event.id,
+                            actor_server_user_id=event.user_id,
+                            target_server_user_id=event.target_user_id,
+                            event_type=event_type,
+                            timestamp=event.timestamp,
+                        )
+                    )
+                except Exception as error:
+                    logger.exception(
+                        "Chat participant was added on the server but local "
+                        "persistence failed: chat=%s contact=%s",
+                        current_chat.server_chat_id,
+                        current_contact.server_user_id,
+                    )
+                    return (
+                        False,
+                        "LOCAL CHAT PARTICIPANT PERSISTENCE FAILED: "
+                        f"{str(error).upper()}",
+                        None,
+                    )
+
+                latest_chat = next(
+                    (
+                        chat
+                        for chat in app_state.chats_cache
+                        if chat.server_chat_id == current_chat.server_chat_id
+                    ),
+                    None,
+                )
+                latest_contact = next(
+                    (
+                        contact
+                        for contact in app_state.contacts_cache
+                        if contact.server_user_id == current_contact.server_user_id
+                    ),
+                    None,
+                )
+                if latest_chat is not None and latest_contact is not None:
+                    if all(
+                        cached.server_user_id != latest_contact.server_user_id
+                        for cached in latest_chat.participants
+                    ):
+                        latest_chat.participants.append(latest_contact)
+                    current_contact = latest_contact
+                return True, "SUCCESS", current_contact
         except Exception as error:
             return False, str(error).upper(), None
 

@@ -288,6 +288,55 @@ class CreateChatButton(QWidget):
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "✚")
 
 
+class AddChatParticipantButton(QWidget):
+    clicked = pyqtSignal()
+
+    def __init__(
+        self,
+        color_active: str,
+        color_inactive: str,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.color_active = color_active
+        self.color_inactive = color_inactive
+        self._active = False
+        self.setFixedSize(32, 32)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("ADD CONTACT TO CHAT")
+        self.setStyleSheet("background: transparent;")
+
+    def set_active(self, active: bool) -> None:
+        if self._active == active:
+            return
+        self._active = active
+        self.update()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = self.color_active if self._active else self.color_inactive
+        painter.setPen(QColor(color))
+        painter.setFont(QFont("Segoe UI Symbol", 16))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "⛨")
+
+
 class CreateChatSubmitButton(QWidget):
     clicked = pyqtSignal()
 

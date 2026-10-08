@@ -13,6 +13,7 @@ from src.adapters.database.dto import ContactDTO
 from src.adapters.database.structures import ContactStatusEnum
 from src.presentation.interactors.messenger import (
     AcceptContactRequestInteractor,
+    AddChatParticipantInteractor,
     BlacklistContactInteractor,
     CreateChatInteractor,
     SearchContactsGlobalInteractor,
@@ -46,8 +47,12 @@ class MessengerInterface(QWidget):
         self.main_window = main_window
         self._contacts: list[ContactCache] = []
         self._chats: list[ChatCache] = []
+        self._current_user_id: UUID | None = None
         self._search_task: asyncio.Task[None] | None = None
         self._chat_creation_task: asyncio.Task[None] | None = None
+        self._chat_participant_tasks: dict[
+            tuple[UUID, UUID], asyncio.Task[None]
+        ] = {}
         self._message_tasks: set[asyncio.Task[None]] = set()
         self._contact_action_tasks: set[asyncio.Task[None]] = set()
         self.setup_ui()
@@ -89,6 +94,12 @@ class MessengerInterface(QWidget):
         self.contacts_panel.contact_action_requested.connect(
             self._handle_contact_action
         )
+        self.contacts_panel.chat_members_requested.connect(
+            self.messages_panel.toggle_chat_members_panel
+        )
+        self.contacts_panel.chat_members_panel_close_requested.connect(
+            self.messages_panel.close_chat_members_panel
+        )
         self.contacts_panel.search_requested.connect(self._schedule_search)
         self.contacts_panel.search_cleared.connect(self._cancel_search)
         self.contacts_panel.create_chat_requested.connect(
@@ -96,6 +107,9 @@ class MessengerInterface(QWidget):
         )
         self.messages_panel.text_message_send_requested.connect(
             self._schedule_text_message
+        )
+        self.messages_panel.chat_participant_add_requested.connect(
+            self._schedule_chat_participant_addition
         )
 
         self.setLayout(root_layout)
@@ -166,6 +180,10 @@ class MessengerInterface(QWidget):
             for cached in self._contacts
         ):
             self._contacts.append(contact)
+        self.messages_panel.set_available_contacts(
+            self._contacts,
+            self._current_user_id,
+        )
         self.contacts_panel.set_conversations(self._contacts, self._chats)
         self.contacts_panel.select_conversation(contact)
 
@@ -176,11 +194,16 @@ class MessengerInterface(QWidget):
             app_state = await request_container.get(AppState)
             contacts = app_state.contacts_cache
             chats = app_state.chats_cache
+            self._current_user_id = app_state.server_user_id
         show_demo = not contacts and not chats
         if show_demo:
             contacts, chats = build_demo_conversations()
         self._contacts = contacts
         self._chats = chats
+        self.messages_panel.set_available_contacts(
+            self._contacts,
+            self._current_user_id,
+        )
         self.contacts_panel.set_conversations(self._contacts, self._chats)
         self.messages_panel.show_conversation(None)
         if show_demo:
@@ -201,7 +224,12 @@ class MessengerInterface(QWidget):
             app_state = await request_container.get(AppState)
             self._contacts = app_state.contacts_cache
             self._chats = app_state.chats_cache
+            self._current_user_id = app_state.server_user_id
 
+        self.messages_panel.set_available_contacts(
+            self._contacts,
+            self._current_user_id,
+        )
         self.contacts_panel.set_conversations(self._contacts, self._chats)
         replacement: ContactCache | ChatCache | None = next(
             (
@@ -221,7 +249,17 @@ class MessengerInterface(QWidget):
                 None,
             )
         if replacement is not None:
-            self.contacts_panel.select_conversation(replacement)
+            self.messages_panel.show_conversation(
+                replacement,
+                preserve_chat_members_panel=True,
+            )
+            if isinstance(replacement, ChatCache):
+                anchor = self.contacts_panel.chat_members_button(replacement)
+                if anchor is not None:
+                    self.messages_panel.reanchor_chat_members_panel(
+                        replacement,
+                        anchor,
+                    )
         elif selected is not None:
             self.messages_panel.show_conversation(None)
 
@@ -284,6 +322,82 @@ class MessengerInterface(QWidget):
         finally:
             if self._chat_creation_task is current_task:
                 self._chat_creation_task = None
+
+    def _schedule_chat_participant_addition(
+        self,
+        chat: ChatCache,
+        contact: ContactCache,
+    ) -> None:
+        key = (chat.server_chat_id, contact.server_user_id)
+        existing = self._chat_participant_tasks.get(key)
+        if existing is not None and not existing.done():
+            return
+        if self.main_window is None or self.main_window.container is None:
+            self.messages_panel.finish_chat_participant_addition(
+                contact,
+                False,
+                "APPLICATION CONTAINER IS NOT AVAILABLE",
+            )
+            return
+
+        task = asyncio.create_task(
+            self._add_chat_participant(chat, contact)
+        )
+        self._chat_participant_tasks[key] = task
+        task.add_done_callback(
+            lambda completed, task_key=key: self._finish_chat_participant_task(
+                task_key,
+                completed,
+            )
+        )
+
+    def _finish_chat_participant_task(
+        self,
+        key: tuple[UUID, UUID],
+        task: asyncio.Task[None],
+    ) -> None:
+        if self._chat_participant_tasks.get(key) is task:
+            self._chat_participant_tasks.pop(key, None)
+
+    async def _add_chat_participant(
+        self,
+        chat: ChatCache,
+        contact: ContactCache,
+    ) -> None:
+        try:
+            success, status_message, _ = await AddChatParticipantInteractor()(
+                self.main_window.container,
+                chat,
+                contact,
+            )
+            self.messages_panel.finish_chat_participant_addition(
+                contact,
+                success,
+                status_message if not success else None,
+            )
+            if not success:
+                logger.warning(
+                    "Failed to add contact %s to chat %s: %s",
+                    contact.server_user_id,
+                    chat.server_chat_id,
+                    status_message,
+                )
+                return
+            await self.refresh_from_state()
+        except asyncio.CancelledError:
+            self.messages_panel.finish_chat_participant_addition(
+                contact,
+                False,
+                "CHAT PARTICIPANT ADDITION CANCELLED",
+            )
+            raise
+        except Exception as error:
+            logger.exception("Unexpected chat participant addition error")
+            self.messages_panel.finish_chat_participant_addition(
+                contact,
+                False,
+                str(error).upper(),
+            )
 
     def _schedule_text_message(
         self,

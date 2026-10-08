@@ -10,6 +10,7 @@ from dishka import Scope, make_async_container
 
 from src.adapters.database.dto import (
     AddChatDTO,
+    AddChatParticipantDTO,
     AddContactDTO,
     AddLocalUserDTO,
     AddMessageFileDTO,
@@ -169,6 +170,13 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
                 name="Example group",
             )
         )
+        await chat_service.add_participant(
+            AddChatParticipantDTO(
+                chat_id=chat.id,
+                contact_id=test_contact.id,
+            ),
+            create_join_event=False,
+        )
 
     started_at = datetime(2026, 9, 21, tzinfo=timezone.utc)
     for index in range(12):
@@ -222,6 +230,8 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
     ]
     assert app_state.chats_cache[0].messages[-1].file_name == "attachment"
     assert not hasattr(app_state.chats_cache[0].messages[-1], "file_content")
+    assert app_state.chats_cache[0].participants == [app_state.contacts_cache[0]]
+    assert app_state.chats_cache[0].participants[0] is app_state.contacts_cache[0]
     assert [
         item.content
         for item in app_state.contacts_cache[0].messages

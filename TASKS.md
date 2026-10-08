@@ -194,6 +194,42 @@ Add focused tests for validation, authentication prerequisites, owner mismatch, 
 
 closed: true
 
+## Task 6 — Expand Chat Participants in the Conversation List
+
+Add an expandable participant list beneath each chat card in the messenger sidebar.
+
+The interaction must behave as follows:
+
+1. the first left click on a chat keeps the existing behavior: select the chat and open its conversation;
+2. a second left click on the already selected chat toggles its participant list;
+3. when the list opens or closes, the chat triangle rotates smoothly by 180 degrees;
+4. keep at most one chat participant list expanded at a time;
+5. render participants directly below their chat using compact cards with a smaller height and a visible left indentation;
+6. participant cards display only the existing presence triangle and username, without a last-message preview;
+7. a participant's presence triangle follows the same privacy and color rules as the normal contact card: only accepted contacts may expose online state, while blank, pending, blacklisted, or unavailable states remain gray;
+8. a left click on a participant opens the direct conversation with that contact;
+9. a right click selects the participant and opens the existing contact action menu, using the same action signals and interactors as an ordinary contact card;
+10. expanding or collapsing participants must not trigger another conversation selection or reload the current chat.
+
+Extend `ChatCache` with a participant collection and populate it in `CacheConversationsInteractor` from the local database through `ChatService.get_chat_participants`. Reuse the same `ContactCache` instances already stored in `AppState.contacts_cache`; do not create independent copies for chat participants. This shared identity must allow realtime presence and contact-status updates to remain consistent in both the normal contact list and expanded chat lists.
+
+The signed-in local user is not represented as a local contact and must not be synthesized as a participant card. Display only the other active chat participants currently available in the local participant mapping. Participant membership must continue to be synchronized by the existing chat synchronization flow; the UI must not call the server directly when a chat is expanded.
+
+Keep the participant card as a dedicated UI class instead of adding multiple participant-specific branches to the normal contact card. Reuse shared drawing or context-menu behavior where practical without coupling the UI directly to database or HTTP services.
+
+Add focused tests for participant-cache construction, shared `ContactCache` identity, repeated-click expansion and collapse, single-expanded-chat behavior, triangle rotation state, participant selection, context-menu action forwarding, and chats without cached participants. Run the relevant tests, Ruff, and mypy before closing the task.
+
+### Implementation notes
+
+- `ChatCache.participants` stores shared references to the matching entries in `AppState.contacts_cache`.
+- `CacheConversationsInteractor` loads active participant mappings from the local database after contact caching; expanding a chat performs no database or HTTP request.
+- `ChatParticipantCard` provides the compact indented layout while reusing the existing selection, presence-color, and contact context-menu behavior.
+- `ContactList` treats a second click on the selected chat as an expansion toggle, allows only one expanded chat, and does not emit another conversation selection while toggling.
+- Demo data includes chat participants so the interaction remains visually testable without a populated account.
+- Relevant UI, cache, database, and messenger tests pass; Ruff and mypy report no issues. Keep the task open until the visual result is accepted.
+
+closed: false
+
 ## Task 7 — Prevent Concurrent SQLite Session Conflicts
 
 Fix the local database race where a successful chat creation can overlap with the immediate `chat_changed` realtime synchronization and produce `sqlite3.OperationalError: cannot commit transaction - SQL statements in progress`.
@@ -222,5 +258,44 @@ The running client must be restarted after this change so its existing engine an
 - The regression test keeps a streaming read cursor open in one session while another session inserts and commits successfully, then verifies the committed row and active PRAGMA values.
 - The new regression test, chat API tests, Ruff, and mypy pass. The broader database run has 83 passing tests and two unrelated pre-existing `LocalUserService` expectation failures.
 - The restarted client successfully repeated chat creation and realtime synchronization without the SQLite commit error.
+
+closed: true
+
+## Task 8 — Add Accepted Contacts to Chats
+
+Add a messenger flow that lets an active chat participant add one of their accepted contacts directly to the selected chat. This version has no invitation approval or pending state: a successful request immediately creates or restores the participant membership.
+
+The existing server contract already supports this behavior through `POST /chats/{chat_id}/participants`. Do not add another endpoint or chat event type. A first-time membership produces `MEMBER_ADDED`, restoring a former participant produces `MEMBER_JOINED`, and the server publishes the existing `chat_changed` realtime invalidation after committing the membership, event, and missing `BLANK` contact relationships. Preserve this transaction and realtime behavior.
+
+Create an `AddChatParticipantInteractor` in `src/presentation/interactors/messenger.py`. It must:
+
+1. accept the selected `ChatCache` and `ContactCache` instead of receiving raw UI text;
+2. require an authenticated token, local user ID, server user ID, a server-backed selected chat, and an `ACCEPTED` contact with a server user ID;
+3. reject the current user and contacts who are already active participants before making an HTTP request;
+4. call `ChatHTTPService.add_participant` exactly once and validate that the returned chat and target user match the requested values;
+5. map the returned participant to the existing local chat and contact, then persist the membership through `ChatService.add_participant` without creating a second synthetic join event;
+6. persist the canonical server event returned by the API, including its server event ID, actor, target, type, and timestamp, so later incremental synchronization does not duplicate it;
+7. add the same shared `ContactCache` instance to `ChatCache.participants`, without creating a copy or duplicate;
+8. leave the local database and cache unchanged when validation or the server request fails, and return a clear failure result for the UI.
+
+Add a `⛨` button inside the right edge of the currently selected chat card in the left conversation list. Keep it hidden on unselected chat cards, and do not add it to direct-contact cards. Clicking it toggles an overlay immediately beside the chat list: the overlay must be flush with the left edge of the message area and must not permanently resize the conversation layout. Its width should remain approximately half the width of the contacts/chats panel.
+
+The `⛨` action and the repeated-card-click participant expansion are mutually exclusive. Clicking the action must consume its own mouse press and open or close only the add-contact panel; it must not rotate the chat triangle or expand the existing participant list.
+
+The panel must contain a vertically scrollable list of cached contacts whose status is `ACCEPTED`. Exclude the current user and every active participant already present in the selected chat. Each contact row must be clickable. Clicking a contact starts the interactor, prevents duplicate submissions for that contact while the request is in flight, and, after success, removes the contact from the available list while immediately updating the expanded participant list through the shared cache object. Keep the panel open so several contacts can be added consecutively. Close it when the button is toggled again, the user clicks outside it, or the selected conversation changes.
+
+Keep the UI, interactor, HTTP service, local service, and cache responsibilities separated. Reuse the existing chat participant endpoint, DTOs, `ChatService`, contact cache, theme colors, scrolling style, and realtime synchronization. Do not introduce pending chat invitations, acceptance/rejection controls, key material in WebSocket payloads, a second participant cache, or a full chat synchronization merely to render the panel.
+
+Add focused tests for interactor prerequisites, accepted-status enforcement, duplicate-participant rejection, one HTTP request per click, canonical event persistence, restored memberships, shared cache identity, failure without local mutation, chat-only button visibility, panel toggling and outside-click closing, candidate filtering, scrolling, and in-flight click protection. Add or extend an integration test proving that the existing server endpoint immediately adds the user, creates the expected event and `BLANK` relationships, and notifies clients through `chat_changed`. Run the relevant client and server tests, Ruff, and mypy before closing the task.
+
+### Implementation progress
+
+- `AddChatParticipantInteractor` validates the current app-state caches and local records, calls the existing participant endpoint once, persists the returned membership without a synthetic event, stores the canonical server event, and updates the shared `ChatCache.participants` list only after local persistence succeeds.
+- Focused tests cover successful persistence and shared cache identity, early candidate rejection, and mismatched server responses. The complete messenger interactor test module passes, and Ruff reports no issues.
+- The selected chat card displays the `⛨` action at its right edge; unselected chats and direct contacts keep it hidden. It opens an overlay flush with the left edge of the message area, directly beside the chat list. The scrollable panel lists accepted contacts, excludes the current user and existing participants, blocks repeated in-flight clicks, and remains open after successful additions so more contacts can be added.
+- The messenger interface connects panel rows to `AddChatParticipantInteractor`, preserves the open panel and selected/expanded chat while shared caches are refreshed, and immediately removes newly added participants from the candidate list.
+- Focused UI tests cover chat-only button visibility, panel toggling, candidate filtering, current-user and participant exclusion, scrolling, outside-click and conversation-change closing, successful row removal, and in-flight click protection. The relevant interactor and UI suites pass.
+- The final layout and interaction were visually accepted with the prepared accepted contacts. The `⛨` action consumes its mouse press, so opening the add-contact panel does not also expand the chat participant list.
+- Final verification passes the complete messenger interactor and related UI suites (`41 passed`), Ruff, Python compilation, and the diff whitespace check.
 
 closed: true

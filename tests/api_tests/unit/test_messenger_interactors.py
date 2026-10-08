@@ -10,6 +10,8 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 
 from src.adapters.api.dto import (
     ChatDTO as APIChatDTO,
+    ChatEventDTO as APIChatEventDTO,
+    ChatParticipantChangeDTO,
     ChatParticipantDTO,
     ContactPageDTO,
     ContactPublicDTO,
@@ -28,6 +30,7 @@ from src.adapters.database.service import (
     MessageService,
 )
 from src.adapters.database.structures import (
+    ChatEventTypeEnum,
     ContactStatusEnum,
     MessageContentTypeEnum,
 )
@@ -35,6 +38,7 @@ from src.exceptions import APIError
 from src.presentation.interactors.login import SynchronizeContactsInteractor
 from src.presentation.interactors.messenger import (
     AcceptContactRequestInteractor,
+    AddChatParticipantInteractor,
     BlacklistContactInteractor,
     CreateChatInteractor,
     SearchContactsGlobalInteractor,
@@ -518,6 +522,237 @@ async def test_create_chat_interactor_logs_local_persistence_failure(
     chat_service.add_chat.assert_awaited_once()
     assert app_state.chats_cache == []
     assert str(server_chat_id) in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        ChatEventTypeEnum.MEMBER_ADDED,
+        ChatEventTypeEnum.MEMBER_JOINED,
+    ],
+)
+async def test_add_chat_participant_interactor_persists_event_and_shared_cache(
+    event_type: ChatEventTypeEnum,
+) -> None:
+    local_user_id = uuid4()
+    server_user_id = uuid4()
+    local_chat_id = uuid4()
+    server_chat_id = uuid4()
+    contact = make_cached_contact()
+    joined_at = datetime.now(timezone.utc)
+    event_id = uuid4()
+    chat = ChatCache(
+        id=local_chat_id,
+        server_chat_id=server_chat_id,
+        server_owner_id=server_user_id,
+        name="Night shift",
+        created_at=joined_at,
+    )
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.server_user_id = server_user_id
+    app_state.contacts_cache = [contact]
+    app_state.chats_cache = [chat]
+
+    local_chat = ChatDTO.model_construct(
+        id=local_chat_id,
+        local_user_id=local_user_id,
+        server_chat_id=server_chat_id,
+        server_owner_id=server_user_id,
+        name=chat.name,
+        created_at=chat.created_at,
+    )
+    local_contact = make_local_contact(
+        contact,
+        local_user_id,
+        ContactStatusEnum.ACCEPTED,
+    )
+    change = ChatParticipantChangeDTO(
+        participant=ChatParticipantDTO(
+            chat_id=server_chat_id,
+            user_id=contact.server_user_id,
+            invited_by_user_id=server_user_id,
+            joined_at=joined_at,
+            left_at=None,
+        ),
+        event=APIChatEventDTO(
+            id=event_id,
+            chat_id=server_chat_id,
+            user_id=server_user_id,
+            event_type=event_type.value,
+            timestamp=joined_at,
+            target_user_id=contact.server_user_id,
+        ),
+    )
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.add_participant = AsyncMock(return_value=change)
+    chat_service = MagicMock(spec=ChatService)
+    chat_service.get_chat_by_id = AsyncMock(return_value=local_chat)
+    existing_participant = None
+    if event_type is ChatEventTypeEnum.MEMBER_JOINED:
+        existing_participant = MagicMock(left_at=joined_at)
+    chat_service.get_participant = AsyncMock(return_value=existing_participant)
+    chat_service.add_participant = AsyncMock()
+    chat_service.add_chat_event = AsyncMock()
+    contact_service = MagicMock(spec=ContactService)
+    contact_service.get_contact_by_server_user_id = AsyncMock(
+        return_value=local_contact
+    )
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+                ChatService: chat_service,
+                ContactService: contact_service,
+            }
+        ),
+    )
+
+    result = await AddChatParticipantInteractor()(container, chat, contact)
+
+    assert result == (True, "SUCCESS", contact)
+    assert chat.participants == [contact]
+    assert chat.participants[0] is app_state.contacts_cache[0]
+    assert chat_http_service.token == "access-token"
+    chat_http_service.add_participant.assert_awaited_once_with(
+        server_chat_id,
+        contact.server_user_id,
+    )
+    participant_request = chat_service.add_participant.await_args.args[0]
+    assert participant_request.chat_id == local_chat_id
+    assert participant_request.contact_id == contact.id
+    assert participant_request.joined_at == joined_at
+    assert chat_service.add_participant.await_args.kwargs == {
+        "create_join_event": False
+    }
+    event_request = chat_service.add_chat_event.await_args.args[0]
+    assert event_request.server_event_id == event_id
+    assert event_request.actor_server_user_id == server_user_id
+    assert event_request.target_server_user_id == contact.server_user_id
+    assert event_request.event_type is event_type
+
+
+@pytest.mark.asyncio
+async def test_add_chat_participant_interactor_rejects_invalid_candidates_early() -> None:
+    chat = ChatCache(
+        id=uuid4(),
+        server_chat_id=uuid4(),
+        server_owner_id=uuid4(),
+        name="Night shift",
+        created_at=None,
+    )
+    blank_contact = make_cached_contact()
+    blank_contact.status = ContactStatusEnum.BLANK
+    container = MagicMock(spec=AsyncContainer)
+    interactor = AddChatParticipantInteractor()
+
+    invalid_status = await interactor(container, chat, blank_contact)
+
+    assert invalid_status == (
+        False,
+        "ONLY ACCEPTED CONTACTS CAN BE ADDED TO CHATS",
+        None,
+    )
+    container.assert_not_called()
+
+    accepted_contact = make_cached_contact()
+    chat.participants.append(accepted_contact)
+    duplicate = await interactor(container, chat, accepted_contact)
+
+    assert duplicate == (
+        False,
+        "CONTACT IS ALREADY A CHAT PARTICIPANT",
+        None,
+    )
+    container.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_add_chat_participant_interactor_rejects_mismatched_server_response() -> None:
+    local_user_id = uuid4()
+    server_user_id = uuid4()
+    chat = ChatCache(
+        id=uuid4(),
+        server_chat_id=uuid4(),
+        server_owner_id=server_user_id,
+        name="Night shift",
+        created_at=None,
+    )
+    contact = make_cached_contact()
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.server_user_id = server_user_id
+    app_state.contacts_cache = [contact]
+    app_state.chats_cache = [chat]
+    local_chat = ChatDTO.model_construct(
+        id=chat.id,
+        local_user_id=local_user_id,
+        server_chat_id=chat.server_chat_id,
+        server_owner_id=server_user_id,
+        name=chat.name,
+        created_at=None,
+    )
+    local_contact = make_local_contact(
+        contact,
+        local_user_id,
+        ContactStatusEnum.ACCEPTED,
+    )
+    joined_at = datetime.now(timezone.utc)
+    change = ChatParticipantChangeDTO(
+        participant=ChatParticipantDTO(
+            chat_id=chat.server_chat_id,
+            user_id=uuid4(),
+            invited_by_user_id=server_user_id,
+            joined_at=joined_at,
+            left_at=None,
+        ),
+        event=APIChatEventDTO(
+            id=uuid4(),
+            chat_id=chat.server_chat_id,
+            user_id=server_user_id,
+            event_type=ChatEventTypeEnum.MEMBER_ADDED.value,
+            timestamp=joined_at,
+            target_user_id=contact.server_user_id,
+        ),
+    )
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.add_participant = AsyncMock(return_value=change)
+    chat_service = MagicMock(spec=ChatService)
+    chat_service.get_chat_by_id = AsyncMock(return_value=local_chat)
+    chat_service.get_participant = AsyncMock(return_value=None)
+    chat_service.add_participant = AsyncMock()
+    chat_service.add_chat_event = AsyncMock()
+    contact_service = MagicMock(spec=ContactService)
+    contact_service.get_contact_by_server_user_id = AsyncMock(
+        return_value=local_contact
+    )
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+                ChatService: chat_service,
+                ContactService: contact_service,
+            }
+        ),
+    )
+
+    result = await AddChatParticipantInteractor()(container, chat, contact)
+
+    assert result == (
+        False,
+        "CHAT PARTICIPANT RESPONSE DOES NOT MATCH REQUEST",
+        None,
+    )
+    chat_service.add_participant.assert_not_awaited()
+    chat_service.add_chat_event.assert_not_awaited()
+    assert chat.participants == []
 
 
 @pytest.mark.asyncio
