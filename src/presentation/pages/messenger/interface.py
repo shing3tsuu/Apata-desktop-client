@@ -18,6 +18,7 @@ from src.presentation.interactors.messenger import (
     CreateChatInteractor,
     SearchContactsGlobalInteractor,
     SearchContactsLocalInteractor,
+    SendChatTextMessageInteractor,
     SendContactRequestInteractor,
     SendContactTextMessageInteractor,
 )
@@ -402,7 +403,7 @@ class MessengerInterface(QWidget):
     def _schedule_text_message(
         self,
         request_id: UUID,
-        contact: ContactCache,
+        conversation: ContactCache | ChatCache,
         text: str,
     ) -> None:
         if self.main_window is None or self.main_window.container is None:
@@ -414,7 +415,7 @@ class MessengerInterface(QWidget):
             return
 
         task = asyncio.create_task(
-            self._send_text_message(request_id, contact, text)
+            self._send_text_message(request_id, conversation, text)
         )
         self._message_tasks.add(task)
         task.add_done_callback(self._message_tasks.discard)
@@ -422,17 +423,23 @@ class MessengerInterface(QWidget):
     async def _send_text_message(
         self,
         request_id: UUID,
-        contact: ContactCache,
+        conversation: ContactCache | ChatCache,
         text: str,
     ) -> None:
         try:
-            success, status_message, saved_message = (
-                await SendContactTextMessageInteractor()(
+            if isinstance(conversation, ContactCache):
+                result = await SendContactTextMessageInteractor()(
                     self.main_window.container,
-                    contact,
+                    conversation,
                     text,
                 )
-            )
+            else:
+                result = await SendChatTextMessageInteractor()(
+                    self.main_window.container,
+                    conversation,
+                    text,
+                )
+            success, status_message, saved_message = result
             server_message_id = (
                 saved_message.server_message_id
                 if success and saved_message is not None
@@ -445,11 +452,15 @@ class MessengerInterface(QWidget):
                 status_message if not success else None,
             )
             if success:
-                self.contacts_panel.refresh_conversation(contact)
+                self.contacts_panel.refresh_conversation(conversation)
             else:
                 logger.warning(
                     "Failed to send a text message to %s: %s",
-                    contact.server_user_id,
+                    (
+                        conversation.server_user_id
+                        if isinstance(conversation, ContactCache)
+                        else conversation.server_chat_id
+                    ),
                     status_message,
                 )
         except asyncio.CancelledError:

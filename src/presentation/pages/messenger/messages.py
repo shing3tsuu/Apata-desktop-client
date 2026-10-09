@@ -149,6 +149,7 @@ class MessageBubble(QWidget):
         color_third: str,
         timestamp: datetime | None = None,
         status: str = "",
+        author: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -162,6 +163,7 @@ class MessageBubble(QWidget):
         self.color_third = color_third
         self.timestamp = _as_utc(timestamp)
         self.status = status
+        self.author = author
 
         if self.is_mine:
             if self.status == "failed":
@@ -179,21 +181,17 @@ class MessageBubble(QWidget):
 
         self._font = QFont("Roboto", 11)
         self._meta_font = QFont("Roboto", 8)
+        self._author_font = QFont("Roboto", 9, QFont.Weight.DemiBold)
         self._padding_x = 18
         self._padding_y = 10
         self._bubble_max_width = 420
         self._tw = 8
         self._meta_h = 20
 
-        fm = QFontMetrics(self._font)
-        text_width = min(
-            fm.horizontalAdvance(text), self._bubble_max_width - self._padding_x * 2
+        _, text_height, author_height = self._content_size()
+        bubble_h = (
+            text_height + author_height + self._padding_y * 2 + self._meta_h
         )
-        text_height = fm.boundingRect(
-            QRect(0, 0, text_width, 9999), Qt.TextFlag.TextWordWrap, text
-        ).height()
-
-        bubble_h = text_height + self._padding_y * 2 + self._meta_h
         self.setFixedHeight(bubble_h + 20)
 
         self.spinner = LoadingSpinner(self, size=14, color=COLOR_LOADING_SPINNER)
@@ -229,17 +227,36 @@ class MessageBubble(QWidget):
         self._update_spinner_pos()
 
     def _get_bubble_size(self):
-        fm = QFontMetrics(self._font)
-        text_width = min(
-            fm.horizontalAdvance(self.text),
-            self._bubble_max_width - self._padding_x * 2,
+        content_width, text_height, author_height = self._content_size()
+        bubble_w = content_width + self._padding_x * 2
+        bubble_h = (
+            text_height + author_height + self._padding_y * 2 + self._meta_h
         )
-        text_height = fm.boundingRect(
-            QRect(0, 0, text_width, 9999), Qt.TextFlag.TextWordWrap, self.text
-        ).height()
-        bubble_w = text_width + self._padding_x * 2
-        bubble_h = text_height + self._padding_y * 2 + self._meta_h
         return bubble_w, bubble_h
+
+    def _content_size(self) -> tuple[int, int, int]:
+        maximum_content_width = self._bubble_max_width - self._padding_x * 2
+        text_metrics = QFontMetrics(self._font)
+        text_width = min(
+            text_metrics.horizontalAdvance(self.text),
+            maximum_content_width,
+        )
+        text_width = max(1, text_width)
+        text_height = text_metrics.boundingRect(
+            QRect(0, 0, text_width, 9999),
+            Qt.TextFlag.TextWordWrap,
+            self.text,
+        ).height()
+        author_height = 0
+        author_width = 0
+        if self.author:
+            author_metrics = QFontMetrics(self._author_font)
+            author_height = author_metrics.height() + 4
+            author_width = min(
+                author_metrics.horizontalAdvance(self.author),
+                maximum_content_width,
+            )
+        return max(text_width, author_width), text_height, author_height
 
     def _update_spinner_pos(self):
         if not self.is_mine:
@@ -295,17 +312,11 @@ class MessageBubble(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(self._font)
 
-        fm = QFontMetrics(self._font)
-        text_width = min(
-            fm.horizontalAdvance(self.text),
-            self._bubble_max_width - self._padding_x * 2,
+        content_width, text_height, author_height = self._content_size()
+        bubble_w = content_width + self._padding_x * 2
+        bubble_h = (
+            text_height + author_height + self._padding_y * 2 + self._meta_h
         )
-        text_height = fm.boundingRect(
-            QRect(0, 0, text_width, 9999), Qt.TextFlag.TextWordWrap, self.text
-        ).height()
-
-        bubble_w = text_width + self._padding_x * 2
-        bubble_h = text_height + self._padding_y * 2 + self._meta_h
         tw = self._tw
         margin = 16
 
@@ -336,16 +347,33 @@ class MessageBubble(QWidget):
         painter.setPen(pen)
         painter.drawPath(path)
 
+        content_x = bx + self._padding_x
+        content_y = by + self._padding_y
+        if self.author:
+            painter.setPen(QColor(COLOR_MESSAGE_TEXT))
+            painter.setFont(self._author_font)
+            displayed_author = QFontMetrics(self._author_font).elidedText(
+                self.author,
+                Qt.TextElideMode.ElideRight,
+                content_width,
+            )
+            painter.drawText(
+                QRect(content_x, content_y, content_width, author_height),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                displayed_author,
+            )
+            content_y += author_height
+
         painter.setPen(QColor(COLOR_MESSAGE_TEXT))
         painter.setFont(self._font)
         painter.drawText(
-            QRect(bx + self._padding_x, by + self._padding_y, text_width, text_height),
+            QRect(content_x, content_y, content_width, text_height),
             Qt.TextFlag.TextWordWrap,
             self.text,
         )
 
         painter.setFont(self._meta_font)
-        meta_y = by + self._padding_y + text_height + 2
+        meta_y = content_y + text_height + 2
         meta_rect = QRect(bx + tw, meta_y, bubble_w - tw * 2, self._meta_h)
 
         # Отображаем только время ЧЧ:ММ
@@ -354,9 +382,9 @@ class MessageBubble(QWidget):
         time_color.setAlphaF(0.75)
         painter.setPen(time_color)
         painter.drawText(
-            meta_rect,
+            meta_rect.adjusted(12, 0, 0, 0),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            f"   {time_str}",
+            time_str,
         )
 
         if self.is_mine and self.status:
@@ -382,17 +410,11 @@ class MessageBubble(QWidget):
     def _bubble_path(self) -> QPainterPath:
         # Returns the path of the bubble hexagon in widget coordinates.
 
-        fm = QFontMetrics(self._font)
-        text_width = min(
-            fm.horizontalAdvance(self.text),
-            self._bubble_max_width - self._padding_x * 2,
+        content_width, text_height, author_height = self._content_size()
+        bubble_w = content_width + self._padding_x * 2
+        bubble_h = (
+            text_height + author_height + self._padding_y * 2 + self._meta_h
         )
-        text_height = fm.boundingRect(
-            QRect(0, 0, text_width, 9999), Qt.TextFlag.TextWordWrap, self.text
-        ).height()
-
-        bubble_w = text_width + self._padding_x * 2
-        bubble_h = text_height + self._padding_y * 2 + self._meta_h
         tw = self._tw
         margin = 16
 
@@ -731,9 +753,9 @@ class ImageBubble(QWidget):
         painter.setPen(time_color)
         painter.setFont(QFont("Roboto", 8))
         painter.drawText(
-            meta_rect,
+            meta_rect.adjusted(12, 0, 0, 0),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            f"   {time_str}",
+            time_str,
         )
 
         if self.is_mine and self.status:
@@ -990,9 +1012,9 @@ class VideoBubble(QWidget):
         painter.setPen(time_color)
         painter.setFont(QFont("Roboto", 8))
         painter.drawText(
-            meta_rect,
+            meta_rect.adjusted(12, 0, 0, 0),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            f"   {time_str}",
+            time_str,
         )
 
         if self.is_mine and self.status:
@@ -1235,6 +1257,7 @@ class MessageList(QWidget):
         is_mine: bool,
         timestamp: datetime | None = None,
         status: str = "",
+        author: str | None = None,
     ) -> MessageBubble:
         timestamp = _as_utc(timestamp)
         self._divider(timestamp)
@@ -1249,6 +1272,7 @@ class MessageList(QWidget):
             self.color_third,
             timestamp,
             status,
+            author,
         )
         self._layout.addWidget(bubble)
         return bubble

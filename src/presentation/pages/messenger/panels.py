@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.adapters.database.structures import ContactStatusEnum, MessageContentTypeEnum
-from src.providers.cache import ChatCache, ContactCache
+from src.providers.cache import ChatCache, ContactCache, MessageCache
 
 from .buttons import AddChatParticipantButton, ConversationTabButton
 from .chat_members import ChatMembersPanel
@@ -462,10 +462,28 @@ class MessagesPanel(QWidget):
                     if message.is_outgoing
                     else ""
                 ),
+                author=(
+                    self._chat_message_author(conversation, message)
+                    if isinstance(conversation, ChatCache)
+                    else None
+                ),
             )
             bubble.context_action.connect(self._handle_context_action)
             bubble.delete_requested.connect(self._delete_message)
         QTimer.singleShot(0, self.messages_view._smooth_scroll_to_bottom)
+
+    def _chat_message_author(
+        self,
+        chat: ChatCache,
+        message: MessageCache,
+    ) -> str | None:
+        if message.is_outgoing:
+            return None
+        if message.contact_id is not None:
+            for contact in [*chat.participants, *self._available_contacts]:
+                if contact.id == message.contact_id:
+                    return contact.username
+        return "UNKNOWN USER"
 
     def finish_chat_participant_addition(
         self,
@@ -549,7 +567,7 @@ class MessagesPanel(QWidget):
 
     def _on_message_sent(self, text: str) -> None:
         conversation = self.selected_conversation
-        if not isinstance(conversation, ContactCache):
+        if not isinstance(conversation, (ContactCache, ChatCache)):
             return
 
         request_id = uuid4()

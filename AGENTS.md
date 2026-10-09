@@ -6,7 +6,7 @@ Before changing the project, read `TASKS.md` and consider every open task relate
 
 1. The user defines the problem and the expected result.
 2. The user and the agent discuss the implementation, constraints, and important details together.
-3. After the approach is agreed upon, the agent adds the task to `TASKS.md` using the next available sequential number.
+3. Add a task to `TASKS.md` only when the user explicitly asks to create or record one. Tasks are intended for substantial work that requires prior discussion; do not create tasks for small fixes, code searches, or routine edits.
 4. Adding a task to `TASKS.md` does not authorize implementation. Start writing code only after the user explicitly asks for it.
 5. Follow the recorded task description during implementation. If the solution needs to change substantially, discuss it with the user first and then update the task.
 6. After implementation, verify the result with appropriate tests and static checks.

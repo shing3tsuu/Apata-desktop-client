@@ -42,7 +42,7 @@ class ChatCreationTitle(QWidget):
         painter.drawText(
             self.rect(),
             Qt.AlignmentFlag.AlignCenter,
-            "▛ C R E A T I N G   C H A T ▟",
+            "C R E A T I N G   C H A T",
         )
 
 
