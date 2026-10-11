@@ -14,7 +14,7 @@ RealtimeCallback = Callable[[dict[str, Any]], Awaitable[bool | None]]
 ConnectionCallback = Callable[[bool], Awaitable[None] | None]
 
 _REALTIME_EVENT_TYPES = {
-    "session_ready",
+    "presence",
     "message_available",
     "presence_changed",
     "contact_changed",
@@ -23,6 +23,9 @@ _REALTIME_EVENT_TYPES = {
 
 
 class WebSocketService:
+    _LISTENER_RESTART_DELAY = 1.0
+    _PRESENCE_COMMAND_TYPE = "presence_update"
+
     def __init__(
         self,
         websocket_dao: WebSocketDAO,
@@ -35,6 +38,7 @@ class WebSocketService:
         self._connection_callback: ConnectionCallback | None = None
         self._is_listening = False
         self._listening_task: asyncio.Task[None] | None = None
+        self._desired_presence_online = False
 
     async def start_websocket_listener(
         self,
@@ -43,10 +47,12 @@ class WebSocketService:
         connection_callback: ConnectionCallback | None = None,
     ) -> bool:
         if self._is_listening:
+            await self.set_presence(True)
             return True
         if not token or event_callback is None:
             return False
 
+        self._desired_presence_online = True
         self._current_token = token
         self._event_callback = event_callback
         self._connection_callback = connection_callback
@@ -75,20 +81,38 @@ class WebSocketService:
     async def _websocket_listener_loop(self) -> None:
         task = asyncio.current_task()
         try:
-            await self._websocket_dao.listen_for_messages(
-                self._handle_websocket_message,
-                self._handle_connection_state,
-            )
+            while self._is_listening and self._current_token is not None:
+                try:
+                    await self._websocket_dao.listen_for_messages(
+                        self._handle_websocket_message,
+                        self._handle_connection_state,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except AuthenticationError:
+                    self._logger.warning("WebSocket authentication expired")
+                    break
+                except Exception:
+                    self._logger.exception(
+                        "WebSocket listener stopped unexpectedly; restarting"
+                    )
+
+                if not self._is_listening or self._current_token is None:
+                    break
+
+                self._logger.warning("WebSocket listener exited; restarting")
+                await asyncio.sleep(self._LISTENER_RESTART_DELAY)
         except asyncio.CancelledError:
             raise
-        except AuthenticationError:
-            self._logger.warning("WebSocket authentication expired")
-        except Exception:
-            self._logger.exception("WebSocket listener stopped unexpectedly")
         finally:
             if self._listening_task is task:
                 await self._websocket_dao.disconnect()
-                await self._handle_connection_state(False)
+                try:
+                    await self._handle_connection_state(False)
+                except Exception:
+                    self._logger.exception(
+                        "WebSocket disconnection callback failed"
+                    )
                 self._clear_listener_state()
 
     async def _handle_websocket_message(self, raw_message: str | bytes) -> None:
@@ -113,6 +137,9 @@ class WebSocketService:
             await callback(event)
 
     async def _handle_connection_state(self, connected: bool) -> None:
+        if connected:
+            await self._send_presence_update()
+
         callback = self._connection_callback
         if callback is None:
             return
@@ -120,8 +147,24 @@ class WebSocketService:
         if asyncio.iscoroutine(result):
             await result
 
+    async def set_presence(self, online: bool) -> bool:
+        self._desired_presence_online = online
+        return await self._send_presence_update()
+
+    async def _send_presence_update(self) -> bool:
+        if not self._websocket_dao.is_connected:
+            return False
+        return await self._websocket_dao.send_json(
+            {
+                "version": 1,
+                "type": self._PRESENCE_COMMAND_TYPE,
+                "online": self._desired_presence_online,
+            }
+        )
+
     async def stop_websocket_listener(self) -> None:
         task = self._listening_task
+        await self.set_presence(False)
         self._is_listening = False
         try:
             if task is not None and task is not asyncio.current_task() and not task.done():
@@ -141,6 +184,7 @@ class WebSocketService:
             "is_listening": self._is_listening,
             "has_token": self._current_token is not None,
             "has_callback": self._event_callback is not None,
+            "desired_presence_online": self._desired_presence_online,
             "timestamp": datetime.now().astimezone().isoformat(),
         }
 
@@ -150,3 +194,4 @@ class WebSocketService:
         self._connection_callback = None
         self._is_listening = False
         self._listening_task = None
+        self._desired_presence_online = False
