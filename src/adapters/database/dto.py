@@ -246,7 +246,10 @@ class ChatEventDTO(AddChatEventDTO):
 class AddMessageTextDTO(BaseModel):
     local_user_id: UUID
     server_message_id: UUID
-    logical_message_id: UUID | None = None
+    general_message_uuid: UUID | None = None
+    server_reply_to_id: UUID | None = None
+    reply_to_general_message_uuid: UUID | None = None
+    reply_to_id: UUID | None = None
     contact_id: UUID | None = None
     chat_id: UUID | None = None
     content: str
@@ -263,17 +266,22 @@ class AddMessageTextDTO(BaseModel):
 
     @model_validator(mode="after")
     def check_contact_or_chat(self):
-        if self.logical_message_id is None:
-            self.logical_message_id = self.server_message_id
         if self.contact_id is None and self.chat_id is None:
             raise ValueError("Either contact_id or chat_id must be provided")
+        if (self.chat_id is None) != (self.general_message_uuid is None):
+            raise ValueError(
+                "general_message_uuid must be set exactly for chat messages"
+            )
         return self
 
 
 class AddMessageFileDTO(BaseModel):
     local_user_id: UUID
     server_message_id: UUID
-    logical_message_id: UUID | None = None
+    general_message_uuid: UUID | None = None
+    server_reply_to_id: UUID | None = None
+    reply_to_general_message_uuid: UUID | None = None
+    reply_to_id: UUID | None = None
     contact_id: UUID | None = None
     chat_id: UUID | None = None
     file_name: str
@@ -295,7 +303,7 @@ class AddMessageFileDTO(BaseModel):
     @classmethod
     def validate_file_name(cls, value: str) -> str:
         if not is_valid_file_name(value):
-            raise ValueError("File name must not contain a path or extension")
+            raise ValueError("File name must not contain a path or reserved name")
         return value
 
     @field_validator("file_mime_type", mode="before")
@@ -307,10 +315,12 @@ class AddMessageFileDTO(BaseModel):
 
     @model_validator(mode="after")
     def check_contact_or_chat(self):
-        if self.logical_message_id is None:
-            self.logical_message_id = self.server_message_id
         if self.contact_id is None and self.chat_id is None:
             raise ValueError("Either contact_id or chat_id must be provided")
+        if (self.chat_id is None) != (self.general_message_uuid is None):
+            raise ValueError(
+                "general_message_uuid must be set exactly for chat messages"
+            )
         return self
 
 
@@ -324,7 +334,10 @@ class MessageDTO(BaseModel):
     id: UUID
     local_user_id: UUID
     server_message_id: UUID
-    logical_message_id: UUID | None = None
+    general_message_uuid: UUID | None = None
+    server_reply_to_id: UUID | None = None
+    reply_to_general_message_uuid: UUID | None = None
+    reply_to_id: UUID | None = None
     contact_id: UUID | None
     chat_id: UUID | None
     content_type: MessageContentTypeEnum
@@ -343,19 +356,13 @@ class MessageDTO(BaseModel):
     def normalize_timestamp(cls, value: datetime) -> datetime:
         return _normalize_utc(value)
 
-    @model_validator(mode="after")
-    def default_logical_message_id(self) -> "MessageDTO":
-        if self.logical_message_id is None:
-            self.logical_message_id = self.server_message_id
-        return self
-
     @field_validator("file_name")
     @classmethod
     def validate_file_name(cls, value: str | None) -> str | None:
         if value is None:
             return None
         if not is_valid_file_name(value):
-            raise ValueError("File name must not contain a path or extension")
+            raise ValueError("File name must not contain a path or reserved name")
         return value
 
     @field_validator("file_mime_type", mode="before")

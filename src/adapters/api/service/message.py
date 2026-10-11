@@ -11,6 +11,7 @@ from src.adapters.api.dto import (
     FailedMessageDTO,
     MessageProcessingResultDTO,
     SentChatMessageDeliveryDTO,
+    SentDirectMessageDTO,
 )
 from src.adapters.encryption.service import EncryptionService
 from src.exceptions import (
@@ -64,7 +65,8 @@ class MessageHTTPService:
         sender_ed_private_key: str,
         sender_ecdh_private_key: str,
         ephemeral_ecdh_public_key: str,
-    ) -> UUID | None:
+        reply_to_id: UUID | None = None,
+    ) -> SentDirectMessageDTO | None:
         if self._current_token is None:
             self._logger.warning("Cannot send message without an active session")
             return None
@@ -90,7 +92,7 @@ class MessageHTTPService:
                 recipient_ecdh_signature=recipient_ecdh_signature,
             )
 
-            await self._message_dao.send_message_text(
+            sent_message = await self._message_dao.send_message_text(
                 recipient_id=recipient_id,
                 chat_id=chat_id,
                 message_id=message_dto.message_uuid,
@@ -99,8 +101,11 @@ class MessageHTTPService:
                 ephemeral_public_key=ephemeral_ecdh_public_key,
                 ephemeral_signature=message_dto.ephemeral_signature,
                 token=token,
+                reply_to_id=reply_to_id,
             )
-            return message_dto.message_uuid
+            if sent_message.id != message_dto.message_uuid:
+                raise APIError("Sent message response ID does not match the request")
+            return sent_message
 
         except AuthenticationError:
             del self.token
@@ -121,6 +126,8 @@ class MessageHTTPService:
         sender_ed_private_key: str,
         sender_ecdh_private_key: str,
         sender_ecdh_public_key: str,
+        reply_to_general_message_uuid: UUID | None = None,
+        reply_targets: dict[UUID, UUID] | None = None,
     ) -> list[SentChatMessageDeliveryDTO]:
         if self._current_token is None:
             raise AuthenticationError(
@@ -165,9 +172,10 @@ class MessageHTTPService:
             if len(signatures) != 1:
                 raise APIError("Chat delivery signatures must be identical")
 
-            logical_message_id = uuid.uuid7()
+            general_message_uuid = uuid.uuid7()
             batch = ChatMessageBatchDTO(
-                logical_message_id=logical_message_id,
+                general_message_uuid=general_message_uuid,
+                reply_to_general_message_uuid=reply_to_general_message_uuid,
                 content_type="text",
                 ephemeral_public_key=sender_ecdh_public_key,
                 ephemeral_signature=next(iter(signatures)),
@@ -176,6 +184,9 @@ class MessageHTTPService:
                         recipient_id=delivery.recipient_uuid,
                         message_id=delivery.message_uuid,
                         message=delivery.encrypted_message,
+                        reply_to_id=(reply_targets or {}).get(
+                            delivery.recipient_uuid
+                        ),
                     )
                     for delivery in encrypted_deliveries
                 ],
@@ -195,8 +206,8 @@ class MessageHTTPService:
                 {delivery.id for delivery in sent_deliveries} != expected_delivery_ids
                 or {delivery.recipient_id for delivery in sent_deliveries}
                 != expected_user_ids
-                or {delivery.logical_message_id for delivery in sent_deliveries}
-                != {logical_message_id}
+                or {delivery.general_message_uuid for delivery in sent_deliveries}
+                != {general_message_uuid}
                 or len({delivery.timestamp for delivery in sent_deliveries}) != 1
             ):
                 raise APIError("Chat message response does not match the sent batch")

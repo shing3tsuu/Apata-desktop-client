@@ -19,8 +19,8 @@ from .buttons import AddChatParticipantButton, ConversationTabButton
 from .chat_members import ChatMembersPanel
 from .contacts import ContactList, Conversation, conversation_name
 from .creation import ChatCreationPanel
-from .fields import MessageField
-from .messages import MessageBubble, MessagesView
+from .fields import MessageField, ReplySelection
+from .messages import ImageBubble, MessageBubble, MessagesView, VideoBubble
 from .search import ConversationSearchPanel
 from .theme import (
     COLOR_CONTACT_BORDER,
@@ -287,7 +287,9 @@ class ContactsPanel(QWidget):
 
 
 class MessagesPanel(QWidget):
-    text_message_send_requested = pyqtSignal(object, object, str)
+    text_message_send_requested = pyqtSignal(object, object, str, object)
+    file_message_send_requested = pyqtSignal(object, object, str)
+    file_save_requested = pyqtSignal(object, str)
     chat_participant_add_requested = pyqtSignal(object, object)
 
     def __init__(
@@ -316,8 +318,16 @@ class MessagesPanel(QWidget):
         self.selected_conversation: Conversation | None = None
         self._available_contacts: list[ContactCache] = []
         self._current_user_id: UUID | None = None
+        self._current_username: str | None = None
         self._chat_members_anchor: AddChatParticipantButton | None = None
         self._pending_text_bubbles: dict[UUID, MessageBubble] = {}
+        self._pending_text_replies: dict[UUID, ReplySelection | None] = {}
+        self._pending_file_bubbles: dict[
+            UUID,
+            MessageBubble | ImageBubble | VideoBubble,
+        ] = {}
+        self._file_message_ids: dict[QWidget, UUID] = {}
+        self._loaded_file_contents: dict[UUID, bytes] = {}
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._setup_ui()
 
@@ -359,6 +369,7 @@ class MessagesPanel(QWidget):
         )
         self.message_field.message_sent.connect(self._on_message_sent)
         self.message_field.file_sent.connect(self._on_file_sent)
+        self.message_field.set_file_sending_enabled(False)
         layout.addWidget(self.message_field)
 
         self.setLayout(layout)
@@ -390,6 +401,9 @@ class MessagesPanel(QWidget):
                 current_user_id,
             )
 
+    def set_current_user(self, username: str | None) -> None:
+        self._current_username = username
+
     def show_conversation(
         self,
         conversation: Conversation | None,
@@ -397,6 +411,12 @@ class MessagesPanel(QWidget):
         preserve_chat_members_panel: bool = False,
     ) -> None:
         previous = self.selected_conversation
+        conversation_changed = self._conversation_key(
+            previous
+        ) != self._conversation_key(conversation)
+        if conversation_changed:
+            self._loaded_file_contents.clear()
+            self.message_field.clear_reply()
         same_chat = (
             isinstance(previous, ChatCache)
             and isinstance(conversation, ChatCache)
@@ -410,7 +430,12 @@ class MessagesPanel(QWidget):
         if not keep_panel_open:
             self.chat_members_panel.close_panel()
         self.selected_conversation = conversation
+        self.message_field.set_file_sending_enabled(
+            isinstance(conversation, ContactCache)
+        )
         self._pending_text_bubbles.clear()
+        self._pending_text_replies.clear()
+        self._pending_file_bubbles.clear()
         if isinstance(conversation, ContactCache):
             leading_icon = "👤"
             title = conversation.username.upper()
@@ -442,35 +467,108 @@ class MessagesPanel(QWidget):
             self._position_chat_members_panel()
             self.chat_members_panel.raise_()
         message_list = self.messages_view.message_list
+        self._file_message_ids.clear()
         message_list.clear_messages()
         if conversation is None:
             return
         for message in conversation.messages:
-            if message.content_type == MessageContentTypeEnum.TEXT:
+            image_data = self._loaded_file_contents.get(message.id)
+            if (
+                message.content_type == MessageContentTypeEnum.IMAGE
+                and image_data is not None
+            ):
+                bubble = message_list.add_image_data(
+                    image_data=image_data,
+                    is_mine=message.is_outgoing,
+                    timestamp=message.timestamp,
+                    status=(
+                        "failed"
+                        if message.failed is True
+                        else "sent"
+                        if message.is_outgoing
+                        else ""
+                    ),
+                    server_message_id=message.server_message_id,
+                )
+            elif message.content_type == MessageContentTypeEnum.TEXT:
                 text = message.content or ""
+                bubble = message_list.add_message(
+                    server_message_id=message.server_message_id,
+                    local_message_id=message.id,
+                    text=text,
+                    is_mine=message.is_outgoing,
+                    timestamp=message.timestamp,
+                    status=(
+                        "failed"
+                        if message.failed is True
+                        else "sent"
+                        if message.is_outgoing
+                        else ""
+                    ),
+                    author=(
+                        self._chat_message_author(conversation, message)
+                        if isinstance(conversation, ChatCache)
+                        else None
+                    ),
+                    reply_author=message.reply_author,
+                    reply_text=message.reply_text,
+                )
             else:
                 text = f"⎙ {message.file_name or message.content_type.value}"
-            bubble = message_list.add_message(
-                server_message_id=message.server_message_id,
-                text=text,
-                is_mine=message.is_outgoing,
-                timestamp=message.timestamp,
-                status=(
-                    "failed"
-                    if message.failed is True
-                    else "sent"
-                    if message.is_outgoing
-                    else ""
-                ),
-                author=(
-                    self._chat_message_author(conversation, message)
-                    if isinstance(conversation, ChatCache)
-                    else None
-                ),
-            )
-            bubble.context_action.connect(self._handle_context_action)
-            bubble.delete_requested.connect(self._delete_message)
+                bubble = message_list.add_message(
+                    server_message_id=message.server_message_id,
+                    local_message_id=message.id,
+                    text=text,
+                    is_mine=message.is_outgoing,
+                    timestamp=message.timestamp,
+                    status=(
+                        "failed"
+                        if message.failed is True
+                        else "sent"
+                        if message.is_outgoing
+                        else ""
+                    ),
+                    author=(
+                        self._chat_message_author(conversation, message)
+                        if isinstance(conversation, ChatCache)
+                        else None
+                    ),
+                )
+            if isinstance(bubble, (MessageBubble, ImageBubble, VideoBubble)):
+                bubble.context_action.connect(self._handle_context_action)
+                bubble.delete_requested.connect(self._delete_message)
+            if isinstance(bubble, (ImageBubble, VideoBubble)):
+                self._file_message_ids[bubble] = message.id
         QTimer.singleShot(0, self.messages_view._smooth_scroll_to_bottom)
+
+    @staticmethod
+    def _conversation_key(
+        conversation: Conversation | None,
+    ) -> tuple[str, UUID] | None:
+        if isinstance(conversation, ContactCache):
+            return "contact", conversation.id
+        if isinstance(conversation, ChatCache):
+            return "chat", conversation.id
+        return None
+
+    def set_loaded_file_contents(
+        self,
+        conversation: Conversation,
+        contents: dict[UUID, bytes],
+    ) -> None:
+        if self._conversation_key(self.selected_conversation) != self._conversation_key(
+            conversation
+        ):
+            return
+        message_ids = {message.id for message in conversation.messages}
+        self._loaded_file_contents.update(
+            {
+                message_id: content
+                for message_id, content in contents.items()
+                if message_id in message_ids
+            }
+        )
+        self.show_conversation(conversation, preserve_chat_members_panel=True)
 
     def _chat_message_author(
         self,
@@ -570,18 +668,24 @@ class MessagesPanel(QWidget):
         if not isinstance(conversation, (ContactCache, ChatCache)):
             return
 
+        reply = self.message_field.current_reply()
+        reply_author = reply.author if reply is not None else None
+        reply_text = reply.preview if reply is not None else None
         request_id = uuid4()
         bubble = self.messages_view.message_list.add_message(
             server_message_id=None,
             text=text,
             is_mine=True,
             status="",
+            reply_author=reply_author,
+            reply_text=reply_text,
         )
         bubble.context_action.connect(self._handle_context_action)
         bubble.delete_requested.connect(self._delete_message)
         self._pending_text_bubbles[request_id] = bubble
+        self._pending_text_replies[request_id] = reply
         QTimer.singleShot(10, self.messages_view._smooth_scroll_to_bottom)
-        self.text_message_send_requested.emit(request_id, conversation, text)
+        self.text_message_send_requested.emit(request_id, conversation, text, reply)
 
     def finish_text_message(
         self,
@@ -589,19 +693,29 @@ class MessagesPanel(QWidget):
         success: bool,
         server_message_id: UUID | None = None,
         failure_message: str | None = None,
+        local_message_id: UUID | None = None,
     ) -> None:
         bubble = self._pending_text_bubbles.pop(request_id, None)
+        reply = self._pending_text_replies.pop(request_id, None)
         if bubble is None:
             return
         if success and server_message_id is not None:
             bubble.server_message_id = server_message_id
+            bubble.local_message_id = local_message_id
             bubble.set_status("sent")
+            if reply is not None and self.message_field.current_reply() == reply:
+                self.message_field.clear_reply()
             return
         if failure_message:
             bubble.setToolTip(failure_message)
         bubble.set_status("failed")
 
-    def _on_file_sent(self, path: str):
+    def _on_file_sent(self, path: str) -> None:
+        conversation = self.selected_conversation
+        if not isinstance(conversation, ContactCache):
+            return
+
+        request_id = uuid4()
         ext = os.path.splitext(path)[1].lower()
         if ext in IMAGE_EXTENSIONS:
             bubble = self.messages_view.message_list.add_image(path, is_mine=True)
@@ -613,22 +727,123 @@ class MessagesPanel(QWidget):
                 text=f"‹ ⎙ {os.path.basename(path)} ›",
                 is_mine=True,
             )
-        bubble.context_action.connect(self._handle_context_action)
-        bubble.delete_requested.connect(self._delete_message)
+        if isinstance(bubble, (MessageBubble, ImageBubble, VideoBubble)):
+            bubble.context_action.connect(self._handle_context_action)
+            bubble.delete_requested.connect(self._delete_message)
+        self._pending_file_bubbles[request_id] = bubble
         QTimer.singleShot(10, self.messages_view._smooth_scroll_to_bottom)
+        self.file_message_send_requested.emit(request_id, conversation, path)
 
+    def finish_file_message(
+        self,
+        request_id: UUID,
+        success: bool,
+        server_message_id: UUID | None = None,
+        failure_message: str | None = None,
+        local_message_id: UUID | None = None,
+    ) -> None:
+        bubble = self._pending_file_bubbles.pop(request_id, None)
+        if bubble is None:
+            return
+        if success and server_message_id is not None:
+            bubble.server_message_id = server_message_id
+            bubble.set_status("sent")
+            if local_message_id is not None and isinstance(
+                bubble, (ImageBubble, VideoBubble)
+            ):
+                self._file_message_ids[bubble] = local_message_id
+            return
+        if failure_message:
+            bubble.setToolTip(failure_message)
         bubble.set_status("failed")
 
     def _handle_context_action(self, action: str):
-        if not self.sender():
+        sender = self.sender()
+        if not isinstance(sender, QWidget):
+            return
+        if action == "save_to_disk":
+            message_id = self._file_message_ids.get(sender)
+            conversation = self.selected_conversation
+            if message_id is None or conversation is None:
+                return
+            message = next(
+                (
+                    cached_message
+                    for cached_message in conversation.messages
+                    if cached_message.id == message_id
+                ),
+                None,
+            )
+            if (
+                message is None
+                or message.file_name is None
+                or message.file_mime_type is None
+            ):
+                return
+            suggested_name = f"{message.file_name}{message.file_mime_type.value}"
+            self.file_save_requested.emit(message_id, suggested_name)
+            return
+        if action == "reply":
+            self._start_reply(sender)
             return
         if action == "delete":
-            sender = self.sender()
-            if isinstance(sender, QWidget):
-                layout = self.messages_view.message_list._layout
-                layout.removeWidget(sender)
-                sender.hide()
-                sender.deleteLater()
+            self._file_message_ids.pop(sender, None)
+            layout = self.messages_view.message_list._layout
+            layout.removeWidget(sender)
+            sender.hide()
+            sender.deleteLater()
+
+    def _start_reply(self, sender: QWidget) -> None:
+        conversation = self.selected_conversation
+        if not isinstance(conversation, (ContactCache, ChatCache)):
+            return
+
+        local_message_id = (
+            sender.local_message_id
+            if isinstance(sender, MessageBubble)
+            else self._file_message_ids.get(sender)
+        )
+        server_message_id = getattr(sender, "server_message_id", None)
+        if local_message_id is None or not isinstance(server_message_id, UUID):
+            return
+        source_message = next(
+            (
+                message
+                for message in conversation.messages
+                if message.id == local_message_id
+                and message.server_message_id == server_message_id
+            ),
+            None,
+        )
+        if source_message is None:
+            return
+
+        is_mine = bool(getattr(sender, "is_mine", False))
+        if is_mine:
+            author = self._current_username or "UNKNOWN USER"
+        elif isinstance(sender, MessageBubble) and sender.author:
+            author = sender.author
+        else:
+            author = conversation_name(conversation)
+
+        if isinstance(sender, MessageBubble):
+            preview = sender.text.replace("‹ ", "").replace(" ›", "").strip()
+        elif isinstance(sender, ImageBubble):
+            preview = "PHOTO"
+        elif isinstance(sender, VideoBubble):
+            preview = "VIDEO"
+        else:
+            return
+        if not preview:
+            preview = "MESSAGE"
+        self.message_field.set_reply(
+            author,
+            preview,
+            local_message_id=source_message.id,
+            server_message_id=source_message.server_message_id,
+            general_message_uuid=source_message.general_message_uuid,
+        )
+        self.message_field.input_field.setFocus()
 
     def _delete_message(self, msg_id: UUID | None):
         # stub for delete business logic

@@ -39,6 +39,7 @@ class FileHTTPService:
     _DEFAULT_PLAINTEXT_CHUNK_SIZE = 4 * 1024 * 1024
     _MAX_CONCURRENT_FILE_DOWNLOADS = 3
     _MAX_CHUNK_RESUME_ATTEMPTS = 3
+    MAX_PLAINTEXT_FILE_SIZE = 100 * 1024 * 1024
     _AMBIGUOUS_CHUNK_STATUS_CODES = frozenset({408, 409})
 
     def __init__(
@@ -276,9 +277,7 @@ class FileHTTPService:
                     file_mime_type=descriptor.file_mime_type,
                     file_size=descriptor.file_size,
                     file_content=file_content,
-                    content_type=self._get_content_type(
-                        self._get_media_type(descriptor.file_mime_type)
-                    ),
+                    content_type=self.get_content_type(descriptor.file_mime_type),
                     timestamp=file_data.get("timestamp")
                 )
 
@@ -293,8 +292,9 @@ class FileHTTPService:
             )
             return None
 
-    @staticmethod
+    @classmethod
     def _prepare_file_content(
+        cls,
         *,
         file_name: str,
         file_mime_type: str,
@@ -304,8 +304,8 @@ class FileHTTPService:
             raise ValueError("File name must be a non-empty string")
         if "/" in file_name or "\\" in file_name:
             raise ValueError("File name must not contain a path")
-        if file_name in {".", ".."} or "." in file_name:
-            raise ValueError("File name must not contain an extension")
+        if file_name in {".", ".."}:
+            raise ValueError("File name must not be a reserved path component")
         if not isinstance(file_mime_type, str) or not file_mime_type:
             raise ValueError("File MIME type must be a non-empty extension")
         if not file_mime_type.startswith(".") or file_mime_type == ".":
@@ -314,6 +314,8 @@ class FileHTTPService:
             raise ValueError("File MIME type must not contain a path")
         if not isinstance(file_content, bytes):
             raise ValueError("File content must be bytes")
+        if len(file_content) > cls.MAX_PLAINTEXT_FILE_SIZE:
+            raise ValueError("File exceeds the 100 MiB client limit")
         return len(file_content)
 
     async def _start_upload(
@@ -558,6 +560,10 @@ class FileHTTPService:
         }:
             return "archive"
         return "document"
+
+    @classmethod
+    def get_content_type(cls, file_mime_type: str) -> str:
+        return cls._get_content_type(cls._get_media_type(file_mime_type))
 
     def _require_token(self) -> str | None:
         if self._current_token is None:

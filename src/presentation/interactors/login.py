@@ -354,7 +354,7 @@ class ComparePasswordInteractor:
 
 
 class GetPrivateKeysInteractor:
-    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str, bool]:
         try:
             async with container() as request_container:
                 key_storage = await request_container.get(EncryptedKeyStorage)
@@ -364,7 +364,7 @@ class GetPrivateKeysInteractor:
                 password = app_state.password
 
                 if username is None or password is None:
-                    return False, "CHECK LOCAL USER OPERATION SKIPPED"
+                    return False, "CHECK LOCAL USER OPERATION SKIPPED", False
 
                 ed_private_key = await key_storage.get_ed_private_key(
                     username, password
@@ -373,15 +373,7 @@ class GetPrivateKeysInteractor:
                     return (
                         False,
                         "FAILED TO RETRIEVE PRIVATE KEYS - INVALID PASSWORD OR CORRUPTED DATA",
-                    )
-
-                ecdh_private_key = await key_storage.get_ecdh_private_key(
-                    username, password
-                )
-                if not ecdh_private_key:
-                    return (
                         False,
-                        "FAILED TO RETRIEVE PRIVATE KEYS - INVALID PASSWORD OR CORRUPTED DATA",
                     )
 
                 master_key = await key_storage.get_master_key(
@@ -391,17 +383,26 @@ class GetPrivateKeysInteractor:
                     return (
                         False,
                         "FAILED TO RETRIEVE PRIVATE KEYS - INVALID PASSWORD OR CORRUPTED DATA",
+                        False,
                     )
 
                 app_state.ed_private_key = ed_private_key
-                app_state.ecdh_private_key = ecdh_private_key
                 app_state.master_key = master_key
 
-                return True, "SUCCESS"
+                ecdh_private_key = await key_storage.get_ecdh_private_key(
+                    username, password
+                )
+                if not ecdh_private_key:
+                    app_state.ecdh_private_key = None
+                    app_state.ecdh_public_key = None
+                    return True, "ECDH KEY RECOVERY REQUIRED", True
+
+                app_state.ecdh_private_key = ecdh_private_key
+                return True, "SUCCESS", False
 
         except Exception as e:
             error_msg = f"{(str(e)).upper()}"
-            return False, error_msg
+            return False, error_msg, False
 
 
 class SynchronizeContactsInteractor:
@@ -822,11 +823,29 @@ class SyncMessageHistoryInteractor:
                     AddMessageTextDTO(
                         local_user_id=local_user_id,
                         server_message_id=UUID(str(new_message_text["id"])),
-                        logical_message_id=UUID(
-                            str(
-                                new_message_text.get("logical_message_id")
-                                or new_message_text["id"]
+                        general_message_uuid=(
+                            UUID(str(new_message_text["general_message_uuid"]))
+                            if new_message_text.get("general_message_uuid") is not None
+                            else None
+                        ),
+                        server_reply_to_id=(
+                            UUID(str(new_message_text["reply_to_id"]))
+                            if new_message_text.get("reply_to_id") is not None
+                            else None
+                        ),
+                        reply_to_general_message_uuid=(
+                            UUID(
+                                str(
+                                    new_message_text[
+                                        "reply_to_general_message_uuid"
+                                    ]
+                                )
                             )
+                            if new_message_text.get(
+                                "reply_to_general_message_uuid"
+                            )
+                            is not None
+                            else None
                         ),
                         contact_id=(local_contact.id if local_contact else None),
                         chat_id=(local_chat.id if local_chat else None),
@@ -897,53 +916,84 @@ class SyncMessageHistoryInteractor:
             )
 
 
+async def _issue_and_store_ecdh_key(
+    auth_http_service: AuthHTTPService,
+    key_storage: EncryptedKeyStorage,
+    app_state: AppState,
+    *,
+    clear_existing: bool,
+) -> tuple[bool, str]:
+    token = app_state.token
+    ed_private_key = app_state.ed_private_key
+    username = app_state.username
+    password = app_state.password
+
+    if (
+        token is None
+        or ed_private_key is None
+        or username is None
+        or password is None
+    ):
+        return False, "OBTAINING CRYPTOGRAPHIC KEYS OPERATIONS SKIPPED"
+
+    auth_http_service.token = token
+    ecdh_private_key, ecdh_public_key = await auth_http_service.update_ecdh_key(
+        ed_private_key
+    )
+    if not ecdh_private_key or not ecdh_public_key:
+        return False, "FAILED TO ROTATE KEYS"
+
+    if clear_existing:
+        key_storage.clear_ecdh_private_key(username)
+
+    success = await key_storage.store_ecdh_private_key(
+        username=username,
+        ecdh_private_key=ecdh_private_key,
+        password=password,
+    )
+    if not success:
+        return False, "FAILED TO STORE ECDH PRIVATE KEY"
+
+    app_state.ecdh_public_key = ecdh_public_key
+    app_state.ecdh_private_key = ecdh_private_key
+    return True, "SUCCESS"
+
+
+class RecoverECDHKeyInteractor:
+    """Issue a replacement ECDH key when the local private key is missing."""
+
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
+        try:
+            async with container() as request_container:
+                auth_http_service = await request_container.get(AuthHTTPService)
+                key_storage = await request_container.get(EncryptedKeyStorage)
+                app_state = await request_container.get(AppState)
+                if app_state.ecdh_private_key is not None:
+                    return False, "ECDH KEY RECOVERY IS NOT REQUIRED"
+                return await _issue_and_store_ecdh_key(
+                    auth_http_service,
+                    key_storage,
+                    app_state,
+                    clear_existing=False,
+                )
+        except Exception as e:
+            error_msg = f"{(str(e)).upper()}"
+            return False, error_msg
+
+
 class RotateKeysInteractor:
     async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
         try:
             async with container() as request_container:
                 auth_http_service = await request_container.get(AuthHTTPService)
                 key_storage = await request_container.get(EncryptedKeyStorage)
-
                 app_state = await request_container.get(AppState)
-
-                token = app_state.token
-                ed_private_key = app_state.ed_private_key
-                username = app_state.username
-                password = app_state.password
-
-                if (
-                    token is None
-                    or ed_private_key is None
-                    or username is None
-                    or password is None
-                ):
-                    return False, "OBTAINING CRYPTOGRAPHIC KEYS OPERATIONS SKIPPED"
-
-                auth_http_service.token = token
-
-                (
-                    ecdh_private_key,
-                    ecdh_public_key,
-                ) = await auth_http_service.update_ecdh_key(ed_private_key)
-
-                if not ecdh_private_key:
-                    return False, "FAILED TO ROTATE KEYS"
-
-                key_storage.clear_ecdh_private_key(username)
-
-                success = await key_storage.store_ecdh_private_key(
-                    username=username,
-                    ecdh_private_key=ecdh_private_key,
-                    password=password,
+                return await _issue_and_store_ecdh_key(
+                    auth_http_service,
+                    key_storage,
+                    app_state,
+                    clear_existing=True,
                 )
-
-                if not success:
-                    return False, "FAILED TO STORE ECDH PRIVATE KEY"
-
-                app_state.ecdh_public_key = ecdh_public_key
-                app_state.ecdh_private_key = ecdh_private_key
-
-                return True, "SUCCESS"
         except Exception as e:
             error_msg = f"{(str(e)).upper()}"
             return False, error_msg
@@ -965,6 +1015,7 @@ class CacheConversationsInteractor:
                 app_state.chats_cache = []
                 if local_user_id is None or master_key is None:
                     return False, "CONVERSATION CACHE PREREQUISITES MISSING", {}
+                local_username = app_state.username or "UNKNOWN USER"
 
                 contact_service = await request_container.get(ContactService)
                 chat_service = await request_container.get(ChatService)
@@ -989,6 +1040,13 @@ class CacheConversationsInteractor:
                         contact_id=contact.id,
                         limit=10,
                     )
+                    cached_messages = await self._cache_contact_messages(
+                        message_service,
+                        local_user_id,
+                        local_username,
+                        contact.username,
+                        messages,
+                    )
                     cached_contact = ContactCache(
                         id=contact.id,
                         server_user_id=contact.server_user_id,
@@ -998,7 +1056,7 @@ class CacheConversationsInteractor:
                         online=contact.online,
                         ed_public_key=contact.ed_public_key,
                         ecdh_public_key=contact.ecdh_public_key,
-                        messages=[self._cache_message(message) for message in messages],
+                        messages=cached_messages,
                     )
                     contact_cache.append(cached_contact)
                     cached_contacts_by_id[contact.id] = cached_contact
@@ -1009,6 +1067,13 @@ class CacheConversationsInteractor:
                         chat_id=chat.id,
                         limit=10,
                     )
+                    cached_messages = await self._cache_chat_messages(
+                        message_service,
+                        local_user_id,
+                        local_username,
+                        cached_contacts_by_id,
+                        messages,
+                    )
                     participants = await chat_service.get_chat_participants(chat.id)
                     chat_cache.append(
                         ChatCache(
@@ -1017,9 +1082,7 @@ class CacheConversationsInteractor:
                             server_owner_id=chat.server_owner_id,
                             name=chat.name,
                             created_at=chat.created_at,
-                            messages=[
-                                self._cache_message(message) for message in messages
-                            ],
+                            messages=cached_messages,
                             participants=[
                                 cached_contacts_by_id[participant.id]
                                 for participant in participants
@@ -1048,7 +1111,7 @@ class CacheConversationsInteractor:
         return MessageCache(
             id=message.id,
             server_message_id=message.server_message_id,
-            logical_message_id=message.logical_message_id,
+            general_message_uuid=message.general_message_uuid,
             contact_id=message.contact_id,
             chat_id=message.chat_id,
             content_type=message.content_type,
@@ -1060,7 +1123,112 @@ class CacheConversationsInteractor:
             is_outgoing=message.is_outgoing,
             is_delivered=message.is_delivered,
             failed=message.failed,
+            server_reply_to_id=message.server_reply_to_id,
+            reply_to_general_message_uuid=(
+                message.reply_to_general_message_uuid
+            ),
+            reply_to_id=message.reply_to_id,
         )
+
+    async def _cache_contact_messages(
+        self,
+        message_service: MessageService,
+        local_user_id: UUID,
+        local_username: str,
+        contact_username: str,
+        messages: list[MessageDTO],
+    ) -> list[MessageCache]:
+        targets_by_id = {message.id: message for message in messages}
+        missing_target_ids = {
+            message.reply_to_id
+            for message in messages
+            if message.reply_to_id is not None
+            and message.reply_to_id not in targets_by_id
+        }
+        if missing_target_ids:
+            targets = await message_service.get_messages_by_ids(
+                local_user_id,
+                list(missing_target_ids),
+            )
+            targets_by_id.update({target.id: target for target in targets})
+
+        cached_messages: list[MessageCache] = []
+        for message in messages:
+            cached_message = self._cache_message(message)
+            if message.server_reply_to_id is not None:
+                target = (
+                    targets_by_id.get(message.reply_to_id)
+                    if message.reply_to_id is not None
+                    else None
+                )
+                if target is None:
+                    cached_message.reply_author = "REPLY"
+                    cached_message.reply_text = "MESSAGE IS UNAVAILABLE"
+                else:
+                    cached_message.reply_author = (
+                        local_username if target.is_outgoing else contact_username
+                    )
+                    cached_message.reply_text = self._message_preview(target)
+            cached_messages.append(cached_message)
+        return cached_messages
+
+    async def _cache_chat_messages(
+        self,
+        message_service: MessageService,
+        local_user_id: UUID,
+        local_username: str,
+        contacts_by_id: dict[UUID, ContactCache],
+        messages: list[MessageDTO],
+    ) -> list[MessageCache]:
+        targets_by_id = {message.id: message for message in messages}
+        missing_target_ids = {
+            message.reply_to_id
+            for message in messages
+            if message.reply_to_id is not None
+            and message.reply_to_id not in targets_by_id
+        }
+        if missing_target_ids:
+            targets = await message_service.get_messages_by_ids(
+                local_user_id,
+                list(missing_target_ids),
+            )
+            targets_by_id.update({target.id: target for target in targets})
+
+        cached_messages: list[MessageCache] = []
+        for message in messages:
+            cached_message = self._cache_message(message)
+            if (
+                message.server_reply_to_id is not None
+                or message.reply_to_general_message_uuid is not None
+            ):
+                target = (
+                    targets_by_id.get(message.reply_to_id)
+                    if message.reply_to_id is not None
+                    else None
+                )
+                if target is None:
+                    cached_message.reply_author = "REPLY"
+                    cached_message.reply_text = "MESSAGE IS UNAVAILABLE"
+                else:
+                    author = local_username if target.is_outgoing else "UNKNOWN USER"
+                    if not target.is_outgoing and target.contact_id is not None:
+                        contact = contacts_by_id.get(target.contact_id)
+                        if contact is not None:
+                            author = contact.username
+                    cached_message.reply_author = author
+                    cached_message.reply_text = self._message_preview(target)
+            cached_messages.append(cached_message)
+        return cached_messages
+
+    @staticmethod
+    def _message_preview(message: MessageDTO) -> str:
+        if message.content:
+            return " ".join(message.content.split())
+        if message.content_type is MessageContentTypeEnum.IMAGE:
+            return "PHOTO"
+        if message.content_type is MessageContentTypeEnum.VIDEO:
+            return "VIDEO"
+        return message.file_name or message.content_type.value.upper()
 
 
 RealtimeListener = Callable[[], Awaitable[None] | None]

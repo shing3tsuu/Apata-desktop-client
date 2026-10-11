@@ -147,7 +147,7 @@ async def _send_data_to_registered_user(
 
         message_service.token = sender_login.access_token
         ephemeral_keys = await encryption_service.generate_key_pairs()
-        message_id = await message_service.send_encrypted_message_text(
+        sent_message = await message_service.send_encrypted_message_text(
             recipient_id=receiver_server_user_id,
             chat_id=None,
             message="message waiting for synchronization",
@@ -156,7 +156,7 @@ async def _send_data_to_registered_user(
             sender_ecdh_private_key=ephemeral_keys.ecdh_private_key,
             ephemeral_ecdh_public_key=ephemeral_keys.ecdh_public_key,
         )
-        assert message_id is not None
+        assert sent_message is not None
 
         chat_service.token = sender_login.access_token
         chat = await chat_service.create_chat("synchronization chat")
@@ -170,7 +170,7 @@ async def _send_data_to_registered_user(
         return {
             "sender_id": sender_id,
             "chat_id": chat.id,
-            "message_id": message_id,
+            "message_id": sent_message.id,
         }
 
 
@@ -196,7 +196,7 @@ async def _send_direct_message_without_contact_request(
 
         ephemeral_keys = await encryption_service.generate_key_pairs()
         message_service.token = sender_login.access_token
-        message_id = await message_service.send_encrypted_message_text(
+        sent_message = await message_service.send_encrypted_message_text(
             recipient_id=receiver_server_user_id,
             chat_id=None,
             message="first message creates blank contact",
@@ -205,10 +205,10 @@ async def _send_direct_message_without_contact_request(
             sender_ecdh_private_key=ephemeral_keys.ecdh_private_key,
             ephemeral_ecdh_public_key=ephemeral_keys.ecdh_public_key,
         )
-        assert message_id is not None
+        assert sent_message is not None
         return {
             "sender_id": UUID(sender_registration.id),
-            "message_id": message_id,
+            "message_id": sent_message.id,
         }
 
 
@@ -221,7 +221,11 @@ async def _login_and_synchronize_with_login_interactors(
         await CheckLocalUserLoginInteractor()(container, username, password)
     )
     _assert_success(await ComparePasswordInteractor()(container))
-    _assert_success(await GetPrivateKeysInteractor()(container))
+    keys_success, keys_message, recovery_required = (
+        await GetPrivateKeysInteractor()(container)
+    )
+    assert keys_success, keys_message
+    assert not recovery_required
     _assert_success(await LoginUserInteractor()(container))
 
     contacts_success, contacts_message, contacts_count = (

@@ -57,6 +57,7 @@ class MessageContentMimeTypeEnum(StrEnum):
     TEXT = ".txt"
 
     # Image
+    JPG = ".jpg"
     JPEG = ".jpeg"
     PNG = ".png"
     GIF = ".gif"
@@ -238,7 +239,7 @@ class ChatParticipant(Base):
         primary_key=True,
     )
     joined_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc)
     )
     left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -294,6 +295,10 @@ class Message(Base):
             "contact_id IS NOT NULL OR chat_id IS NOT NULL",
             name="message_contact_or_chat_required",
         ),
+        CheckConstraint(
+            "(chat_id IS NULL) = (general_message_uuid IS NULL)",
+            name="message_general_uuid_matches_chat",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
@@ -302,7 +307,9 @@ class Message(Base):
         ForeignKey("local_users.id", ondelete="CASCADE")
     )
     server_message_id: Mapped[UUID]
-    logical_message_id: Mapped[UUID] = mapped_column(index=True)
+    general_message_uuid: Mapped[UUID | None] = mapped_column(index=True)
+    server_reply_to_id: Mapped[UUID | None] = mapped_column(index=True)
+    reply_to_general_message_uuid: Mapped[UUID | None] = mapped_column(index=True)
 
     contact_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("contacts.id", ondelete="CASCADE")
@@ -340,7 +347,7 @@ class Message(Base):
     )
 
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc)
     )
     is_outgoing: Mapped[bool]
     is_delivered: Mapped[bool] = mapped_column(default=False)

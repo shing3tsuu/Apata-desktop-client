@@ -212,7 +212,7 @@ def test_message_service_delivers_and_acks_against_live_api() -> None:
 
                 plaintext = "live message test"
                 message_service.token = sender["access_token"]
-                message_id = await message_service.send_encrypted_message_text(
+                sent_message = await message_service.send_encrypted_message_text(
                     recipient_id=UUID(recipient["id"]),
                     chat_id=None,
                     message=plaintext,
@@ -221,7 +221,8 @@ def test_message_service_delivers_and_acks_against_live_api() -> None:
                     sender_ecdh_private_key=ephemeral_keys.ecdh_private_key,
                     ephemeral_ecdh_public_key=ephemeral_keys.ecdh_public_key,
                 )
-                assert message_id is not None
+                assert sent_message is not None
+                message_id = sent_message.id
 
                 contact_service.token = recipient["access_token"]
                 contacts = await contact_service.list_all_contacts()

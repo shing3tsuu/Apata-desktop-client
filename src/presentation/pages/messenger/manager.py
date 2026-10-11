@@ -337,7 +337,6 @@ class MessengerManager:
     async def send_message(
         self, contact_id: UUID, text: str, content_type: str | None = None
     ) -> bool:
-        content_type = content_type or "text"
         try:
             async with self._container() as request_container:
                 message_http_service = await request_container.get(MessageHTTPService)
@@ -349,17 +348,17 @@ class MessengerManager:
                 # Find contact data
                 contact = await contact_service.get_contact_by_id(contact_id)
                 # Send encrypted message
-                message_id = await message_http_service.send_encrypted_message_text(
+                sent_message = await message_http_service.send_encrypted_message_text(
                     recipient_id=contact.server_user_id,
+                    chat_id=None,
                     message=text,
-                    content_type=content_type,
                     recipient_ed_public_key=contact.ed_public_key,
                     sender_ed_private_key=self._state.require_ecdsa_private_key,
                     sender_ecdh_private_key=self._state.require_ecdh_private_key,
                     ephemeral_ecdh_public_key=self._state.require_ecdh_public_key,
                 )
 
-                if message_id is None:
+                if sent_message is None:
                     self._logger.error(
                         "Failed to send message, no response from server"
                     )
@@ -368,9 +367,10 @@ class MessengerManager:
                 await message_service.add_message_text(
                     AddMessageTextDTO(
                         local_user_id=self._state.require_local_user_id,
-                        server_message_id=message_id,
+                        server_message_id=sent_message.id,
                         contact_id=contact.id,
                         content=text,
+                        timestamp=sent_message.timestamp,
                         content_type=content_type,
                         is_outgoing=True,
                         is_delivered=True,

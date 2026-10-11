@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -172,3 +173,73 @@ async def test_message_synchronization_persists_sender_failures() -> None:
         local_user_id,
         [failed_message_id],
     )
+
+
+@pytest.mark.asyncio
+async def test_message_synchronization_persists_direct_reply_reference() -> None:
+    local_user_id = uuid4()
+    local_contact_id = uuid4()
+    sender_id = uuid4()
+    message_id = uuid4()
+    reply_target_id = uuid4()
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.master_key = b"master-key"
+    app_state.ecdh_private_key = "recipient-ecdh-private-key"
+
+    message_http_service = MagicMock(spec=MessageHTTPService)
+    message_http_service.get_undelivered_messages = AsyncMock(
+        return_value=[
+            {
+                "id": str(message_id),
+                "sender_id": str(sender_id),
+                "chat_id": None,
+                "reply_to_id": str(reply_target_id),
+                "decrypted_content": "Reply body",
+                "content_type": "text",
+                "timestamp": datetime.now(UTC),
+            }
+        ]
+    )
+    message_http_service.get_failed_messages = AsyncMock(return_value=[])
+    file_http_service = MagicMock(spec=FileHTTPService)
+    file_http_service.get_undelivered_message_files = AsyncMock(return_value=[])
+    contact_service = MagicMock(spec=ContactService)
+    contact_service.get_contacts = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                id=local_contact_id,
+                server_user_id=sender_id,
+                ed_public_key="sender-ed-public-key",
+            )
+        ]
+    )
+    chat_service = MagicMock(spec=ChatService)
+    chat_service.get_chats = AsyncMock(return_value=[])
+    message_service = MagicMock(spec=MessageService)
+    message_service.add_message_text = AsyncMock()
+    message_service.mark_messages_failed = AsyncMock(return_value=0)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                MessageHTTPService: message_http_service,
+                FileHTTPService: file_http_service,
+                ContactService: contact_service,
+                ChatService: chat_service,
+                MessageService: message_service,
+            }
+        ),
+    )
+
+    success, message, counts = await SyncMessageHistoryInteractor()(container)
+
+    assert success, message
+    assert counts == {"text_count": 1, "file_count": 0, "failed_count": 0}
+    stored = message_service.add_message_text.await_args.args[0]
+    assert stored.server_message_id == message_id
+    assert stored.server_reply_to_id == reply_target_id
+    assert stored.reply_to_id is None
+    assert stored.contact_id == local_contact_id

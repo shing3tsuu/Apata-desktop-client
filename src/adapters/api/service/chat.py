@@ -1,12 +1,12 @@
-from uuid import UUID
-
 from datetime import datetime
+from uuid import UUID
 
 from src.adapters.api.dto import (
     ChatDTO,
     ChatEventDTO,
     ChatParticipantChangeDTO,
     ChatParticipantDTO,
+    ChatReplyTargetDTO,
 )
 from src.exceptions import AuthenticationError
 
@@ -123,6 +123,23 @@ class ChatHTTPService:
                 token=token,
             )
             return [ChatParticipantDTO.from_mapping(participant) for participant in response]
+        except AuthenticationError:
+            del self.token
+            raise
+
+    async def get_reply_targets(
+        self,
+        chat_id: UUID,
+        general_message_uuid: UUID,
+    ) -> list[ChatReplyTargetDTO]:
+        token = self._require_token()
+        try:
+            response = await self._chat_dao.get_reply_targets(
+                chat_id=chat_id,
+                general_message_uuid=general_message_uuid,
+                token=token,
+            )
+            return [ChatReplyTargetDTO.from_mapping(item) for item in response]
         except AuthenticationError:
             del self.token
             raise

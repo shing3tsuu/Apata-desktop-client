@@ -1,22 +1,48 @@
 import os
+from dataclasses import dataclass
+from uuid import UUID
 
 from PyQt6.QtCore import QEvent, QRect, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QWidget
+from PyQt6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .buttons import AttachButton, SendButton
 from .theme import (
     COLOR_CONTACT_BACKGROUND,
     COLOR_INPUT_FOCUS,
     COLOR_PANEL_BACKGROUND,
+    COLOR_PREVIEW_BACKGROUND,
     COLOR_SEARCH_BACKGROUND,
     COLOR_SEARCH_BORDER,
     COLOR_SEARCH_FOCUS,
     COLOR_SEARCH_PLACEHOLDER,
     COLOR_SEARCH_TEXT,
     COLOR_TEXT,
-    COLOR_PREVIEW_BACKGROUND,
 )
+
+
+@dataclass(slots=True, frozen=True)
+class ReplySelection:
+    author: str
+    preview: str
+    local_message_id: UUID | None
+    server_message_id: UUID | None
+    general_message_uuid: UUID | None = None
 
 
 class ConversationSearchField(QWidget):
@@ -471,6 +497,105 @@ class MessageInputField(QLineEdit):
         super().paintEvent(event)
 
 
+class ReplyPreview(QWidget):
+    removed = pyqtSignal()
+
+    def __init__(
+        self,
+        color_primary: str,
+        color_border: str,
+        color_text: str = COLOR_TEXT,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.color_primary = color_primary
+        self.color_border = color_border
+        self.color_text = color_text
+        self.author = ""
+        self.preview = ""
+        self._close_rect = QRect()
+        self.setFixedHeight(38)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def set_reply(self, author: str, preview: str) -> None:
+        self.author = author
+        self.preview = " ".join(preview.split())
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor(COLOR_PANEL_BACKGROUND))
+
+        border_pen = QPen(QColor(self.color_border))
+        border_pen.setWidth(1)
+        painter.setPen(border_pen)
+        painter.drawLine(0, 0, self.width(), 0)
+
+        painter.setPen(QColor(self.color_primary))
+        painter.setFont(QFont("Roboto", 18))
+        painter.drawText(
+            QRect(2, 0, 28, self.height()),
+            Qt.AlignmentFlag.AlignCenter,
+            "↪",
+        )
+
+        accent_pen = QPen(QColor(self.color_primary))
+        accent_pen.setWidth(3)
+        painter.setPen(accent_pen)
+        painter.drawLine(34, 5, 34, self.height() - 5)
+
+        text_left = 44
+        close_width = 28
+        available_width = max(1, self.width() - text_left - close_width - 6)
+        author_font = QFont("Roboto", 9, QFont.Weight.DemiBold)
+        preview_font = QFont("Roboto", 9)
+
+        painter.setPen(QColor(self.color_primary))
+        painter.setFont(author_font)
+        displayed_author = QFontMetrics(author_font).elidedText(
+            self.author,
+            Qt.TextElideMode.ElideRight,
+            available_width,
+        )
+        painter.drawText(
+            QRect(text_left, 2, available_width, 16),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            displayed_author,
+        )
+
+        painter.setPen(QColor(self.color_text))
+        painter.setFont(preview_font)
+        displayed_preview = QFontMetrics(preview_font).elidedText(
+            self.preview,
+            Qt.TextElideMode.ElideRight,
+            available_width,
+        )
+        painter.drawText(
+            QRect(text_left, 18, available_width, 17),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            displayed_preview,
+        )
+
+        self._close_rect = QRect(self.width() - close_width, 0, close_width, 38)
+        painter.setPen(QColor(self.color_primary))
+        painter.setFont(QFont("Roboto", 14))
+        painter.drawText(
+            self._close_rect,
+            Qt.AlignmentFlag.AlignCenter,
+            "×",
+        )
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._close_rect.contains(
+            event.position().toPoint()
+        ):
+            self.removed.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class MessageField(QWidget):
     message_sent = pyqtSignal(str)
     file_sent = pyqtSignal(str)
@@ -489,20 +614,36 @@ class MessageField(QWidget):
         self.color_divider = color_divider
         self.color_focus = color_focus
         self.attached_file: str | None = None
-        self._preview: "AttachPreview | None" = None
+        self._preview: AttachPreview | None = None
+        self._file_sending_enabled = True
+        self._reply: ReplySelection | None = None
 
         self.setFixedHeight(50)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(200, 8, 200, 6)
-        layout.setSpacing(8)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(200, 0, 200, 6)
+        layout.setSpacing(0)
+
+        self.reply_preview = ReplyPreview(
+            self.color_primary,
+            self.color_border,
+        )
+        self.reply_preview.removed.connect(self.clear_reply)
+        self.reply_preview.hide()
+        layout.addWidget(self.reply_preview)
+
+        controls = QWidget(self)
+        controls.setStyleSheet("background: transparent;")
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 8, 0, 0)
+        controls_layout.setSpacing(8)
 
         self.attach_button = AttachButton(self.color_primary, self.color_border)
         self.attach_button.file_selected.connect(self._on_file_selected)
-        layout.addWidget(self.attach_button)
+        controls_layout.addWidget(self.attach_button)
 
         self.input_field = MessageInputField(
             self.color_primary,
@@ -510,15 +651,58 @@ class MessageField(QWidget):
             self.color_focus,
         )
         self.input_field.returnPressed.connect(self._on_send)
-        layout.addWidget(self.input_field, stretch=1)
+        controls_layout.addWidget(self.input_field, stretch=1)
 
         self.send_button = SendButton(self.color_primary, COLOR_PANEL_BACKGROUND)
         self.send_button.mousePressEvent = self._send_button_pressed  # type: ignore[method-assign]
-        layout.addWidget(self.send_button)
+        controls_layout.addWidget(self.send_button)
+
+        layout.addWidget(controls, stretch=1)
 
         self.setLayout(layout)
 
+    def set_reply(
+        self,
+        author: str,
+        preview: str,
+        *,
+        local_message_id: UUID | None = None,
+        server_message_id: UUID | None = None,
+        general_message_uuid: UUID | None = None,
+    ) -> None:
+        self._reply = ReplySelection(
+            author=author,
+            preview=preview,
+            local_message_id=local_message_id,
+            server_message_id=server_message_id,
+            general_message_uuid=general_message_uuid,
+        )
+        self.reply_preview.set_reply(author, preview)
+        self.reply_preview.show()
+        self.setFixedHeight(88)
+
+    def clear_reply(self) -> None:
+        self._reply = None
+        self.reply_preview.hide()
+        self.setFixedHeight(50)
+
+    def current_reply(self) -> ReplySelection | None:
+        return self._reply
+
+    def set_file_sending_enabled(self, enabled: bool) -> None:
+        self._file_sending_enabled = enabled
+        self.attach_button.setVisible(enabled)
+        if enabled:
+            return
+        self.attached_file = None
+        if self._preview is not None:
+            self._preview.hide()
+            self._preview.deleteLater()
+            self._preview = None
+
     def _on_file_selected(self, path: str):
+        if not self._file_sending_enabled:
+            return
         self.attached_file = path
 
         # Удаляем старое превью если есть
@@ -567,13 +751,10 @@ class MessageField(QWidget):
 
     def _on_send(self):
         text = self.input_field.text().strip()
-        file = self.attached_file
+        file = self.attached_file if self._file_sending_enabled else None
 
         if not text and not file:
             return
-
-        if text:
-            self.message_sent.emit(text)
 
         if file:
             self.file_sent.emit(file)
@@ -582,7 +763,10 @@ class MessageField(QWidget):
                 self._preview.hide()
                 self._preview.deleteLater()
                 self._preview = None
+            self.clear_reply()
+            return
 
+        self.message_sent.emit(text)
         self.input_field.clear()
 
     def paintEvent(self, event):

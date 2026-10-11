@@ -77,26 +77,36 @@ class ChatMessageDeliveryDTO(DictCompatibleDTO):
     recipient_id: UUID
     message_id: UUID
     message: str
+    reply_to_id: UUID | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "recipient_id": str(self.recipient_id),
             "message_id": str(self.message_id),
             "message": self.message,
+            "reply_to_id": (
+                str(self.reply_to_id) if self.reply_to_id is not None else None
+            ),
         }
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class ChatMessageBatchDTO(DictCompatibleDTO):
-    logical_message_id: UUID
+    general_message_uuid: UUID
     content_type: str
     ephemeral_public_key: str
     ephemeral_signature: str
     deliveries: list[ChatMessageDeliveryDTO]
+    reply_to_general_message_uuid: UUID | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "logical_message_id": str(self.logical_message_id),
+            "general_message_uuid": str(self.general_message_uuid),
+            "reply_to_general_message_uuid": (
+                str(self.reply_to_general_message_uuid)
+                if self.reply_to_general_message_uuid is not None
+                else None
+            ),
             "content_type": self.content_type,
             "ephemeral_public_key": self.ephemeral_public_key,
             "ephemeral_signature": self.ephemeral_signature,
@@ -105,11 +115,32 @@ class ChatMessageBatchDTO(DictCompatibleDTO):
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
+class ChatReplyTargetDTO(DictCompatibleDTO):
+    user_id: UUID
+    message_id: UUID
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any]) -> ChatReplyTargetDTO:
+        try:
+            return cls(
+                user_id=UUID(_required_str(data, "user_id", cls.__name__)),
+                message_id=UUID(_required_str(data, "message_id", cls.__name__)),
+            )
+        except ValueError as error:
+            raise APIError(
+                "Invalid UUID field in ChatReplyTargetDTO",
+                response_data=data,
+            ) from error
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
 class SentChatMessageDeliveryDTO(DictCompatibleDTO):
     id: UUID
-    logical_message_id: UUID
+    general_message_uuid: UUID
     recipient_id: UUID
     timestamp: datetime
+    reply_to_id: UUID | None = None
+    reply_to_general_message_uuid: UUID | None = None
 
     @classmethod
     def from_mapping(
@@ -119,17 +150,54 @@ class SentChatMessageDeliveryDTO(DictCompatibleDTO):
         try:
             return cls(
                 id=UUID(_required_str(data, "id", cls.__name__)),
-                logical_message_id=UUID(
-                    _required_str(data, "logical_message_id", cls.__name__)
+                general_message_uuid=UUID(
+                    _required_str(data, "general_message_uuid", cls.__name__)
                 ),
                 recipient_id=UUID(_required_str(data, "recipient_id", cls.__name__)),
+                timestamp=datetime.fromisoformat(
+                    _required_str(data, "timestamp", cls.__name__)
+                ),
+                reply_to_id=(
+                    UUID(value)
+                    if (value := _optional_str(data, "reply_to_id")) is not None
+                    else None
+                ),
+                reply_to_general_message_uuid=(
+                    UUID(value)
+                    if (
+                        value := _optional_str(
+                            data,
+                            "reply_to_general_message_uuid",
+                        )
+                    )
+                    is not None
+                    else None
+                ),
+            )
+        except ValueError as error:
+            raise APIError(
+                "Invalid UUID or datetime field in SentChatMessageDeliveryDTO",
+                response_data=data,
+            ) from error
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class SentDirectMessageDTO(DictCompatibleDTO):
+    id: UUID
+    timestamp: datetime
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any]) -> SentDirectMessageDTO:
+        try:
+            return cls(
+                id=UUID(_required_str(data, "id", cls.__name__)),
                 timestamp=datetime.fromisoformat(
                     _required_str(data, "timestamp", cls.__name__)
                 ),
             )
         except ValueError as error:
             raise APIError(
-                "Invalid UUID or datetime field in SentChatMessageDeliveryDTO",
+                "Invalid UUID or datetime field in SentDirectMessageDTO",
                 response_data=data,
             ) from error
 

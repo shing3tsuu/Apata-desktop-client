@@ -1,5 +1,10 @@
+import asyncio
 import logging
+import os
+from collections.abc import Sequence
 from datetime import datetime
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -9,6 +14,7 @@ from src.adapters.api.dto import ContactPublicDTO
 from src.adapters.api.service import (
     ChatHTTPService,
     ContactHTTPService,
+    FileHTTPService,
     MessageHTTPService,
 )
 from src.adapters.database.dto import (
@@ -16,6 +22,7 @@ from src.adapters.database.dto import (
     AddChatEventDTO,
     AddChatParticipantDTO,
     AddContactDTO,
+    AddMessageFileDTO,
     AddMessageTextDTO,
     ChatDTO,
     ContactDTO,
@@ -26,6 +33,7 @@ from src.adapters.database.service import ChatService, ContactService, MessageSe
 from src.adapters.database.structures import (
     ChatEventTypeEnum,
     ContactStatusEnum,
+    MessageContentMimeTypeEnum,
     MessageContentTypeEnum,
 )
 from src.exceptions import APIError
@@ -338,11 +346,9 @@ class AddChatParticipantInteractor:
                 ):
                     return False, "CHAT CACHE DOES NOT MATCH LOCAL CHAT", None
 
-                local_contact = (
-                    await contact_service.get_contact_by_server_user_id(
-                        local_user_id,
-                        current_contact.server_user_id,
-                    )
+                local_contact = await contact_service.get_contact_by_server_user_id(
+                    local_user_id,
+                    current_contact.server_user_id,
                 )
                 if local_contact is None or local_contact.id != current_contact.id:
                     return False, "CONTACT CACHE DOES NOT MATCH LOCAL CONTACT", None
@@ -353,7 +359,10 @@ class AddChatParticipantInteractor:
                     local_chat.id,
                     local_contact.id,
                 )
-                if existing_participant is not None and existing_participant.left_at is None:
+                if (
+                    existing_participant is not None
+                    and existing_participant.left_at is None
+                ):
                     return False, "CONTACT IS ALREADY A CHAT PARTICIPANT", None
 
                 chat_http_service.token = token
@@ -377,7 +386,9 @@ class AddChatParticipantInteractor:
                 try:
                     event_type = ChatEventTypeEnum(event.event_type)
                 except ValueError as error:
-                    raise ValueError("Unsupported chat participant event type") from error
+                    raise ValueError(
+                        "Unsupported chat participant event type"
+                    ) from error
                 if event_type not in {
                     ChatEventTypeEnum.MEMBER_ADDED,
                     ChatEventTypeEnum.MEMBER_JOINED,
@@ -549,6 +560,7 @@ class SendContactTextMessageInteractor:
         container: AsyncContainer,
         contact_cache: ContactCache,
         text: str,
+        reply_to_message: MessageCache | None = None,
     ) -> tuple[bool, str, MessageDTO | None]:
         message_text = text.strip()
         if not message_text:
@@ -608,8 +620,28 @@ class SendContactTextMessageInteractor:
                 ):
                     app_state.contacts_cache.append(contact_cache)
 
+                message_service.master_key = master_key
+                reply_target: MessageDTO | None = None
+                if reply_to_message is not None:
+                    if (
+                        reply_to_message.chat_id is not None
+                        or reply_to_message.contact_id != contact.id
+                    ):
+                        return False, "REPLY TARGET IS OUTSIDE THE CONVERSATION", None
+                    reply_target = await message_service.get_message_by_server_id(
+                        local_user_id,
+                        reply_to_message.server_message_id,
+                    )
+                    if (
+                        reply_target is None
+                        or reply_target.id != reply_to_message.id
+                        or reply_target.contact_id != contact.id
+                        or reply_target.chat_id is not None
+                    ):
+                        return False, "REPLY TARGET IS NOT AVAILABLE", None
+
                 message_http_service.token = token
-                server_message_id = (
+                sent_message = (
                     await message_http_service.send_encrypted_message_text(
                         recipient_id=contact.server_user_id,
                         chat_id=None,
@@ -618,20 +650,33 @@ class SendContactTextMessageInteractor:
                         sender_ed_private_key=ed_private_key,
                         sender_ecdh_private_key=ecdh_private_key,
                         ephemeral_ecdh_public_key=ecdh_public_key,
+                        reply_to_id=(
+                            reply_target.server_message_id
+                            if reply_target is not None
+                            else None
+                        ),
                     )
                 )
-                if server_message_id is None:
+                if sent_message is None:
                     return False, "FAILED TO SEND MESSAGE", None
 
-                message_service.master_key = master_key
                 saved_message = await message_service.add_message_text(
                     AddMessageTextDTO(
                         local_user_id=local_user_id,
-                        server_message_id=server_message_id,
+                        server_message_id=sent_message.id,
                         contact_id=contact.id,
                         chat_id=None,
+                        server_reply_to_id=(
+                            reply_target.server_message_id
+                            if reply_target is not None
+                            else None
+                        ),
+                        reply_to_id=(
+                            reply_target.id if reply_target is not None else None
+                        ),
                         content=message_text,
                         content_type=MessageContentTypeEnum.TEXT,
+                        timestamp=sent_message.timestamp,
                         is_outgoing=True,
                         is_delivered=True,
                     )
@@ -641,6 +686,7 @@ class SendContactTextMessageInteractor:
                     contact.id,
                     saved_message,
                     message_text,
+                    reply_to_message,
                 )
                 return True, "SUCCESS", saved_message
 
@@ -653,6 +699,7 @@ class SendContactTextMessageInteractor:
         contact_id: UUID,
         saved_message: MessageDTO,
         message_text: str,
+        reply_to_message: MessageCache | None,
     ) -> None:
         cached_contact = next(
             (
@@ -669,7 +716,7 @@ class SendContactTextMessageInteractor:
             MessageCache(
                 id=saved_message.id,
                 server_message_id=saved_message.server_message_id,
-                logical_message_id=saved_message.logical_message_id,
+                general_message_uuid=saved_message.general_message_uuid,
                 contact_id=saved_message.contact_id,
                 chat_id=None,
                 content_type=MessageContentTypeEnum.TEXT,
@@ -681,10 +728,404 @@ class SendContactTextMessageInteractor:
                 is_outgoing=True,
                 is_delivered=saved_message.is_delivered,
                 failed=saved_message.failed,
+                server_reply_to_id=saved_message.server_reply_to_id,
+                reply_to_id=saved_message.reply_to_id,
+                reply_author=(
+                    app_state.username or "UNKNOWN USER"
+                    if reply_to_message is not None and reply_to_message.is_outgoing
+                    else cached_contact.username
+                    if reply_to_message is not None
+                    else None
+                ),
+                reply_text=(
+                    SendContactTextMessageInteractor._reply_preview(reply_to_message)
+                    if reply_to_message is not None
+                    else None
+                ),
             )
         )
         cached_contact.messages.sort(key=lambda message: message.timestamp)
         del cached_contact.messages[:-10]
+
+    @staticmethod
+    def _reply_preview(message: MessageCache) -> str:
+        if message.content:
+            return " ".join(message.content.split())
+        if message.content_type is MessageContentTypeEnum.IMAGE:
+            return "PHOTO"
+        if message.content_type is MessageContentTypeEnum.VIDEO:
+            return "VIDEO"
+        return message.file_name or message.content_type.value.upper()
+
+
+class SendContactFileMessageInteractor:
+    async def __call__(
+        self,
+        container: AsyncContainer,
+        contact_cache: ContactCache,
+        file_path: str,
+    ) -> tuple[bool, str, MessageDTO | None]:
+        source_path = Path(file_path)
+        if not source_path.is_file():
+            return False, "FILE DOES NOT EXIST", None
+
+        file_size = source_path.stat().st_size
+        if file_size > FileHTTPService.MAX_PLAINTEXT_FILE_SIZE:
+            return False, "FILE EXCEEDS 100 MIB LIMIT", None
+
+        file_mime_type = self._parse_file_mime_type(source_path)
+        if file_mime_type is None:
+            return False, "FILE TYPE IS NOT SUPPORTED", None
+
+        file_name = source_path.name[: -len(source_path.suffix)]
+        if not file_name:
+            return False, "FILE NAME CANNOT BE EMPTY", None
+
+        try:
+            async with container() as request_container:
+                app_state = await request_container.get(AppState)
+                token = app_state.token
+                local_user_id = app_state.local_user_id
+                master_key = app_state.master_key
+                ed_private_key = app_state.ed_private_key
+                ecdh_private_key = app_state.ecdh_private_key
+                ecdh_public_key = app_state.ecdh_public_key
+                if (
+                    token is None
+                    or local_user_id is None
+                    or master_key is None
+                    or ed_private_key is None
+                    or ecdh_private_key is None
+                    or ecdh_public_key is None
+                ):
+                    return False, "FILE SENDING PREREQUISITES MISSING", None
+
+                contact_service = await request_container.get(ContactService)
+                file_http_service = await request_container.get(FileHTTPService)
+                message_service = await request_container.get(MessageService)
+                contact = await contact_service.get_contact_by_server_user_id(
+                    local_user_id,
+                    contact_cache.server_user_id,
+                )
+                recipient_ed_public_key = (
+                    contact.ed_public_key
+                    if contact is not None
+                    else contact_cache.ed_public_key
+                )
+                if recipient_ed_public_key is None:
+                    return False, "CONTACT ED PUBLIC KEY MISSING", None
+                if contact is None and contact_cache.ecdh_public_key is None:
+                    return False, "CONTACT ECDH PUBLIC KEY MISSING", None
+
+                file_content = await asyncio.to_thread(source_path.read_bytes)
+                if len(file_content) > FileHTTPService.MAX_PLAINTEXT_FILE_SIZE:
+                    return False, "FILE EXCEEDS 100 MIB LIMIT", None
+
+                file_http_service.token = token
+                server_message_id = await file_http_service.send_encrypted_message_file(
+                    chat_id=None,
+                    recipient_id=contact_cache.server_user_id,
+                    recipient_ed_public_key=recipient_ed_public_key,
+                    sender_ed_private_key=ed_private_key,
+                    sender_ecdh_private_key=ecdh_private_key,
+                    ephemeral_ecdh_public_key=ecdh_public_key,
+                    file_name=file_name,
+                    file_mime_type=file_mime_type.value,
+                    file_content=file_content,
+                )
+                if server_message_id is None:
+                    return False, "FAILED TO SEND FILE", None
+
+                if contact is None:
+                    contact = await contact_service.add_contact(
+                        AddContactDTO(
+                            local_user_id=local_user_id,
+                            server_user_id=contact_cache.server_user_id,
+                            status=ContactStatusEnum.BLANK,
+                            username=contact_cache.username,
+                            ed_public_key=recipient_ed_public_key,
+                            ecdh_public_key=contact_cache.ecdh_public_key,
+                            last_seen=contact_cache.last_seen,
+                            online=contact_cache.online,
+                        )
+                    )
+                    self._map_contact_cache(app_state, contact_cache, contact)
+
+                content_type = MessageContentTypeEnum(
+                    FileHTTPService.get_content_type(file_mime_type.value)
+                )
+                message_service.master_key = master_key
+                saved_message = await message_service.add_message_file(
+                    AddMessageFileDTO(
+                        local_user_id=local_user_id,
+                        server_message_id=server_message_id,
+                        contact_id=contact.id,
+                        chat_id=None,
+                        file_name=file_name,
+                        file_content=file_content,
+                        file_size=len(file_content),
+                        file_mime_type=file_mime_type,
+                        content_type=content_type,
+                        is_outgoing=True,
+                        is_delivered=True,
+                    )
+                )
+                self._update_contact_cache(app_state, contact.id, saved_message)
+                return True, "SUCCESS", saved_message
+        except Exception as error:
+            return False, str(error).upper(), None
+
+    @staticmethod
+    def _parse_file_mime_type(
+        source_path: Path,
+    ) -> MessageContentMimeTypeEnum | None:
+        try:
+            return MessageContentMimeTypeEnum(source_path.suffix.lower())
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _map_contact_cache(
+        app_state: AppState,
+        contact_cache: ContactCache,
+        contact: ContactDTO,
+    ) -> None:
+        contact_cache.id = contact.id
+        contact_cache.status = contact.status
+        contact_cache.ed_public_key = contact.ed_public_key
+        contact_cache.ecdh_public_key = contact.ecdh_public_key
+        if all(
+            cached.server_user_id != contact_cache.server_user_id
+            for cached in app_state.contacts_cache
+        ):
+            app_state.contacts_cache.append(contact_cache)
+
+    @staticmethod
+    def _update_contact_cache(
+        app_state: AppState,
+        contact_id: UUID,
+        saved_message: MessageDTO,
+    ) -> None:
+        cached_contact = next(
+            (
+                contact
+                for contact in app_state.contacts_cache
+                if contact.id == contact_id
+            ),
+            None,
+        )
+        if cached_contact is None:
+            return
+        cached_contact.messages.append(
+            MessageCache(
+                id=saved_message.id,
+                server_message_id=saved_message.server_message_id,
+                general_message_uuid=saved_message.general_message_uuid,
+                contact_id=saved_message.contact_id,
+                chat_id=saved_message.chat_id,
+                content_type=saved_message.content_type,
+                content=None,
+                file_name=saved_message.file_name,
+                file_size=saved_message.file_size,
+                file_mime_type=saved_message.file_mime_type,
+                timestamp=saved_message.timestamp,
+                is_outgoing=saved_message.is_outgoing,
+                is_delivered=saved_message.is_delivered,
+                failed=saved_message.failed,
+            )
+        )
+        cached_contact.messages.sort(key=lambda message: message.timestamp)
+        del cached_contact.messages[:-10]
+
+
+class LoadConversationFileMessagesInteractor:
+    async def __call__(
+        self,
+        container: AsyncContainer,
+        message_ids: Sequence[UUID],
+    ) -> tuple[bool, str, dict[UUID, bytes]]:
+        unique_message_ids = list(dict.fromkeys(message_ids))
+        if not unique_message_ids:
+            return True, "SUCCESS", {}
+
+        try:
+            async with container() as request_container:
+                app_state = await request_container.get(AppState)
+                local_user_id = app_state.local_user_id
+                master_key = app_state.master_key
+                if local_user_id is None or master_key is None:
+                    return False, "FILE LOADING PREREQUISITES MISSING", {}
+
+                message_service = await request_container.get(MessageService)
+                message_service.master_key = master_key
+                messages = await message_service.get_file_messages(
+                    local_user_id,
+                    unique_message_ids,
+                )
+                return (
+                    True,
+                    "SUCCESS",
+                    {
+                        message.id: message.file_content
+                        for message in messages
+                        if message.file_content is not None
+                    },
+                )
+        except Exception as error:
+            return False, str(error).upper(), {}
+
+
+class SaveMessageFileToDiskInteractor:
+    async def __call__(
+        self,
+        container: AsyncContainer,
+        message_id: UUID,
+        destination_path: str,
+    ) -> tuple[bool, str, Path | None]:
+        selected_path = destination_path.strip()
+        if not selected_path:
+            return False, "DESTINATION PATH IS EMPTY", None
+
+        try:
+            async with container() as request_container:
+                app_state = await request_container.get(AppState)
+                local_user_id = app_state.local_user_id
+                master_key = app_state.master_key
+                if local_user_id is None or master_key is None:
+                    return False, "FILE SAVING PREREQUISITES MISSING", None
+
+                message_service = await request_container.get(MessageService)
+                message_service.master_key = master_key
+                messages = await message_service.get_file_messages(
+                    local_user_id,
+                    [message_id],
+                )
+                message = next(
+                    (item for item in messages if item.id == message_id),
+                    None,
+                )
+                if message is None:
+                    return False, "FILE MESSAGE NOT FOUND", None
+                if (
+                    message.file_content is None
+                    or message.file_name is None
+                    or message.file_size is None
+                    or message.file_mime_type is None
+                ):
+                    return False, "FILE MESSAGE METADATA IS INCOMPLETE", None
+                if len(message.file_content) != message.file_size:
+                    return (
+                        False,
+                        "FILE CONTENT SIZE DOES NOT MATCH METADATA",
+                        None,
+                    )
+
+                destination = await asyncio.to_thread(
+                    self._resolve_destination,
+                    Path(selected_path).expanduser(),
+                    message.file_name,
+                    message.file_mime_type.value,
+                )
+                await asyncio.to_thread(
+                    self._write_file_atomically,
+                    destination,
+                    message.file_content,
+                )
+                return True, "SUCCESS", destination
+        except Exception as error:
+            return False, str(error).upper(), None
+
+    @staticmethod
+    def _resolve_destination(
+        selected_path: Path,
+        file_name: str,
+        extension: str,
+    ) -> Path:
+        if selected_path.exists() and selected_path.is_dir():
+            destination = selected_path / f"{file_name}{extension}"
+        elif selected_path.name.lower().endswith(extension.lower()):
+            destination = selected_path
+        else:
+            destination = Path(f"{selected_path}{extension}")
+
+        if not destination.parent.exists() or not destination.parent.is_dir():
+            raise ValueError("Destination directory does not exist")
+        return destination
+
+    @staticmethod
+    def _write_file_atomically(destination: Path, content: bytes) -> None:
+        temporary_path: Path | None = None
+        try:
+            with NamedTemporaryFile(
+                mode="wb",
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                written = temporary_file.write(content)
+                if written != len(content):
+                    raise OSError("Failed to write complete file content")
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+            os.replace(temporary_path, destination)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+
+class GetChatReplyTargetsInteractor:
+    async def __call__(
+        self,
+        container: AsyncContainer,
+        chat_cache: ChatCache,
+        general_message_uuid: UUID | None,
+    ) -> tuple[bool, str, dict[UUID, UUID]]:
+        if general_message_uuid is None:
+            return False, "QUOTED CHAT MESSAGE HAS NO GENERAL MESSAGE UUID", {}
+
+        try:
+            async with container() as request_container:
+                app_state = await request_container.get(AppState)
+                token = app_state.token
+                if token is None:
+                    return False, "CHAT REPLY TARGET PREREQUISITES MISSING", {}
+
+                current_chat = next(
+                    (
+                        chat
+                        for chat in app_state.chats_cache
+                        if chat.server_chat_id == chat_cache.server_chat_id
+                    ),
+                    None,
+                )
+                if current_chat is None or current_chat.id != chat_cache.id:
+                    return False, "CHAT CACHE IS NOT CURRENT", {}
+
+                chat_http_service = await request_container.get(ChatHTTPService)
+                chat_http_service.token = token
+                targets = await chat_http_service.get_reply_targets(
+                    current_chat.server_chat_id,
+                    general_message_uuid,
+                )
+
+                user_ids = [target.user_id for target in targets]
+                if len(user_ids) != len(set(user_ids)):
+                    raise APIError("Chat reply targets contain duplicate users")
+
+                message_ids = [target.message_id for target in targets]
+                if len(message_ids) != len(set(message_ids)):
+                    raise APIError("Chat reply targets contain duplicate messages")
+
+                return (
+                    True,
+                    "SUCCESS",
+                    {target.user_id: target.message_id for target in targets},
+                )
+        except Exception as error:
+            return False, str(error).upper(), {}
 
 
 class SendChatTextMessageInteractor:
@@ -693,6 +1134,8 @@ class SendChatTextMessageInteractor:
         container: AsyncContainer,
         chat_cache: ChatCache,
         text: str,
+        reply_to_message: MessageCache | None = None,
+        reply_targets: dict[UUID, UUID] | None = None,
     ) -> tuple[bool, str, MessageDTO | None]:
         message_text = text.strip()
         if not message_text:
@@ -730,12 +1173,52 @@ class SendChatTextMessageInteractor:
                 if local_chat.server_chat_id != chat_cache.server_chat_id:
                     return False, "CHAT CACHE DOES NOT MATCH LOCAL CHAT", None
 
+                message_service.master_key = master_key
+                reply_target: MessageDTO | None = None
+                current_reply_targets = reply_targets
+                if reply_to_message is not None:
+                    if (
+                        reply_to_message.chat_id != local_chat.id
+                        or reply_to_message.general_message_uuid is None
+                    ):
+                        return False, "REPLY TARGET IS OUTSIDE THE CHAT", None
+                    if current_reply_targets is None:
+                        return False, "CHAT REPLY TARGETS ARE MISSING", None
+                    reply_target = await message_service.get_message_by_server_id(
+                        local_user_id,
+                        reply_to_message.server_message_id,
+                    )
+                    if (
+                        reply_target is None
+                        or reply_target.id != reply_to_message.id
+                        or reply_target.chat_id != local_chat.id
+                        or reply_target.general_message_uuid
+                        != reply_to_message.general_message_uuid
+                    ):
+                        return False, "REPLY TARGET IS NOT AVAILABLE", None
+                elif current_reply_targets is not None:
+                    return False, "CHAT REPLY MESSAGE IS MISSING", None
+
                 chat_http_service.token = token
                 contact_http_service.token = token
                 message_http_service.token = token
 
                 sent_deliveries = None
                 for attempt in range(2):
+                    if attempt and reply_target is not None:
+                        refreshed_targets = await chat_http_service.get_reply_targets(
+                            chat_cache.server_chat_id,
+                            reply_target.general_message_uuid,
+                        )
+                        refreshed_user_ids = [
+                            target.user_id for target in refreshed_targets
+                        ]
+                        if len(refreshed_user_ids) != len(set(refreshed_user_ids)):
+                            return False, "CHAT REPLY TARGET USERS MUST BE UNIQUE", None
+                        current_reply_targets = {
+                            target.user_id: target.message_id
+                            for target in refreshed_targets
+                        }
                     participants = await chat_http_service.get_participants(
                         chat_cache.server_chat_id
                     )
@@ -851,6 +1334,12 @@ class SendChatTextMessageInteractor:
                                 sender_ed_private_key=ed_private_key,
                                 sender_ecdh_private_key=ecdh_private_key,
                                 sender_ecdh_public_key=ecdh_public_key,
+                                reply_to_general_message_uuid=(
+                                    reply_target.general_message_uuid
+                                    if reply_target is not None
+                                    else None
+                                ),
+                                reply_targets=current_reply_targets,
                             )
                         )
                         break
@@ -865,12 +1354,24 @@ class SendChatTextMessageInteractor:
                     sent_deliveries,
                     key=lambda delivery: str(delivery.id),
                 )
-                message_service.master_key = master_key
                 saved_message = await message_service.add_message_text(
                     AddMessageTextDTO(
                         local_user_id=local_user_id,
                         server_message_id=representative.id,
-                        logical_message_id=representative.logical_message_id,
+                        general_message_uuid=representative.general_message_uuid,
+                        server_reply_to_id=(
+                            reply_target.server_message_id
+                            if reply_target is not None
+                            else None
+                        ),
+                        reply_to_general_message_uuid=(
+                            reply_target.general_message_uuid
+                            if reply_target is not None
+                            else None
+                        ),
+                        reply_to_id=(
+                            reply_target.id if reply_target is not None else None
+                        ),
                         chat_id=local_chat.id,
                         content=message_text,
                         content_type=MessageContentTypeEnum.TEXT,
@@ -882,7 +1383,12 @@ class SendChatTextMessageInteractor:
                 cached_message = MessageCache(
                     id=saved_message.id,
                     server_message_id=saved_message.server_message_id,
-                    logical_message_id=saved_message.logical_message_id,
+                    general_message_uuid=saved_message.general_message_uuid,
+                    server_reply_to_id=saved_message.server_reply_to_id,
+                    reply_to_general_message_uuid=(
+                        saved_message.reply_to_general_message_uuid
+                    ),
+                    reply_to_id=saved_message.reply_to_id,
                     contact_id=None,
                     chat_id=saved_message.chat_id,
                     content_type=MessageContentTypeEnum.TEXT,
@@ -894,6 +1400,29 @@ class SendChatTextMessageInteractor:
                     is_outgoing=True,
                     is_delivered=saved_message.is_delivered,
                     failed=None,
+                    reply_author=(
+                        app_state.username or "UNKNOWN USER"
+                        if reply_to_message is not None
+                        and reply_to_message.is_outgoing
+                        else next(
+                            (
+                                contact.username
+                                for contact in app_state.contacts_cache
+                                if reply_to_message is not None
+                                and contact.id == reply_to_message.contact_id
+                            ),
+                            "UNKNOWN USER",
+                        )
+                        if reply_to_message is not None
+                        else None
+                    ),
+                    reply_text=(
+                        SendContactTextMessageInteractor._reply_preview(
+                            reply_to_message
+                        )
+                        if reply_to_message is not None
+                        else None
+                    ),
                 )
                 cache_targets = [chat_cache]
                 state_chat = next(

@@ -4,20 +4,22 @@ from unittest.mock import AsyncMock, MagicMock, call
 from uuid import UUID, uuid4
 
 import pytest
-from dishka import AsyncContainer
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
+from dishka import AsyncContainer
 
+from src.adapters.api.dao import ContactHTTPDAO
+from src.adapters.api.dto import ChatDTO as APIChatDTO
+from src.adapters.api.dto import ChatEventDTO as APIChatEventDTO
 from src.adapters.api.dto import (
-    ChatDTO as APIChatDTO,
-    ChatEventDTO as APIChatEventDTO,
     ChatParticipantChangeDTO,
     ChatParticipantDTO,
+    ChatReplyTargetDTO,
     ContactPageDTO,
     ContactPublicDTO,
     SentChatMessageDeliveryDTO,
+    SentDirectMessageDTO,
 )
-from src.adapters.api.dao import ContactHTTPDAO
 from src.adapters.api.service import (
     ChatHTTPService,
     ContactHTTPService,
@@ -41,12 +43,13 @@ from src.presentation.interactors.messenger import (
     AddChatParticipantInteractor,
     BlacklistContactInteractor,
     CreateChatInteractor,
+    GetChatReplyTargetsInteractor,
     SearchContactsGlobalInteractor,
     SendChatTextMessageInteractor,
     SendContactRequestInteractor,
     SendContactTextMessageInteractor,
 )
-from src.providers.cache import ChatCache, ContactCache
+from src.providers.cache import ChatCache, ContactCache, MessageCache
 from src.providers.state import AppState
 
 
@@ -992,7 +995,10 @@ async def test_send_contact_text_message_interactor() -> None:
     contact_service.get_contact_by_server_user_id = AsyncMock(return_value=contact)
     message_http_service = MagicMock(spec=MessageHTTPService)
     message_http_service.send_encrypted_message_text = AsyncMock(
-        return_value=server_message_id
+        return_value=SentDirectMessageDTO(
+            id=server_message_id,
+            timestamp=timestamp,
+        )
     )
     message_service = MagicMock(spec=MessageService)
     message_service.add_message_text = AsyncMock(return_value=saved_message)
@@ -1024,6 +1030,7 @@ async def test_send_contact_text_message_interactor() -> None:
         sender_ed_private_key="sender-ed-private-key",
         sender_ecdh_private_key="sender-ecdh-private-key",
         ephemeral_ecdh_public_key="sender-ecdh-public-key",
+        reply_to_id=None,
     )
     message_service.add_message_text.assert_awaited_once()
     stored_dto = message_service.add_message_text.await_args.args[0]
@@ -1031,6 +1038,7 @@ async def test_send_contact_text_message_interactor() -> None:
     assert stored_dto.server_message_id == server_message_id
     assert stored_dto.contact_id == local_contact_id
     assert stored_dto.chat_id is None
+    assert stored_dto.timestamp == timestamp
     assert stored_dto.content == "hello there"
     assert stored_dto.content_type == MessageContentTypeEnum.TEXT
     assert stored_dto.is_outgoing is True
@@ -1039,6 +1047,134 @@ async def test_send_contact_text_message_interactor() -> None:
     assert len(cached_contact.messages) == 1
     assert cached_contact.messages[0].content == "hello there"
     assert cached_contact.messages[0].server_message_id == server_message_id
+
+
+@pytest.mark.asyncio
+async def test_send_contact_text_message_interactor_persists_reply_target() -> None:
+    local_user_id = uuid4()
+    local_contact_id = uuid4()
+    server_contact_id = uuid4()
+    source_local_id = uuid4()
+    source_server_id = uuid4()
+    reply_local_id = uuid4()
+    reply_server_id = uuid4()
+    timestamp = datetime.now(timezone.utc)
+    contact = ContactDTO.model_construct(
+        id=local_contact_id,
+        local_user_id=local_user_id,
+        server_user_id=server_contact_id,
+        status=ContactStatusEnum.ACCEPTED,
+        username="ghost_user",
+        ed_public_key="contact-ed-public-key",
+        ecdh_public_key="contact-ecdh-public-key",
+        last_seen=None,
+        online=True,
+    )
+    reply_target = MessageDTO(
+        id=source_local_id,
+        local_user_id=local_user_id,
+        server_message_id=source_server_id,
+        contact_id=local_contact_id,
+        chat_id=None,
+        content_type=MessageContentTypeEnum.TEXT,
+        content="quoted message",
+        timestamp=timestamp,
+        is_outgoing=True,
+        is_delivered=True,
+    )
+    saved_message = MessageDTO(
+        id=reply_local_id,
+        local_user_id=local_user_id,
+        server_message_id=reply_server_id,
+        server_reply_to_id=source_server_id,
+        reply_to_id=source_local_id,
+        contact_id=local_contact_id,
+        chat_id=None,
+        content_type=MessageContentTypeEnum.TEXT,
+        content="encrypted-at-rest",
+        timestamp=timestamp,
+        is_outgoing=True,
+        is_delivered=True,
+    )
+    source_cache = MessageCache(
+        id=source_local_id,
+        server_message_id=source_server_id,
+        contact_id=local_contact_id,
+        chat_id=None,
+        content_type=MessageContentTypeEnum.TEXT,
+        content="quoted message",
+        file_name=None,
+        file_size=None,
+        file_mime_type=None,
+        timestamp=timestamp,
+        is_outgoing=True,
+        is_delivered=True,
+    )
+
+    app_state = AppState()
+    app_state.username = "sender_user"
+    app_state.token = "access-token"
+    app_state.local_user_id = local_user_id
+    app_state.master_key = b"master-key"
+    app_state.ed_private_key = "sender-ed-private-key"
+    app_state.ecdh_private_key = "sender-ecdh-private-key"
+    app_state.ecdh_public_key = "sender-ecdh-public-key"
+    cached_contact = make_cached_contact(
+        server_user_id=server_contact_id,
+        local_contact_id=local_contact_id,
+    )
+    cached_contact.messages = [source_cache]
+    app_state.contacts_cache = [cached_contact]
+
+    contact_service = MagicMock(spec=ContactService)
+    contact_service.get_contact_by_server_user_id = AsyncMock(return_value=contact)
+    message_http_service = MagicMock(spec=MessageHTTPService)
+    message_http_service.send_encrypted_message_text = AsyncMock(
+        return_value=SentDirectMessageDTO(
+            id=reply_server_id,
+            timestamp=timestamp,
+        )
+    )
+    message_service = MagicMock(spec=MessageService)
+    message_service.get_message_by_server_id = AsyncMock(return_value=reply_target)
+    message_service.add_message_text = AsyncMock(return_value=saved_message)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ContactService: contact_service,
+                MessageHTTPService: message_http_service,
+                MessageService: message_service,
+            }
+        ),
+    )
+
+    result = await SendContactTextMessageInteractor()(
+        container,
+        cached_contact,
+        "reply body",
+        source_cache,
+    )
+
+    assert result == (True, "SUCCESS", saved_message)
+    message_service.get_message_by_server_id.assert_awaited_once_with(
+        local_user_id,
+        source_server_id,
+    )
+    assert (
+        message_http_service.send_encrypted_message_text.await_args.kwargs[
+            "reply_to_id"
+        ]
+        == source_server_id
+    )
+    stored_dto = message_service.add_message_text.await_args.args[0]
+    assert stored_dto.server_reply_to_id == source_server_id
+    assert stored_dto.reply_to_id == source_local_id
+    cached_reply = cached_contact.messages[-1]
+    assert cached_reply.reply_to_id == source_local_id
+    assert cached_reply.reply_author == "sender_user"
+    assert cached_reply.reply_text == "quoted message"
 
 
 @pytest.mark.asyncio
@@ -1087,7 +1223,10 @@ async def test_send_contact_text_message_interactor_maps_global_result() -> None
     contact_service.add_contact = AsyncMock(return_value=local_contact)
     message_http_service = MagicMock(spec=MessageHTTPService)
     message_http_service.send_encrypted_message_text = AsyncMock(
-        return_value=server_message_id
+        return_value=SentDirectMessageDTO(
+            id=server_message_id,
+            timestamp=saved_message.timestamp,
+        )
     )
     message_service = MagicMock(spec=MessageService)
     message_service.add_message_text = AsyncMock(return_value=saved_message)
@@ -1314,7 +1453,153 @@ async def test_contact_synchronization_never_overwrites_a_pinned_ed_key() -> Non
 
 
 @pytest.mark.asyncio
-async def test_send_chat_text_message_interactor_persists_one_logical_message() -> None:
+async def test_get_chat_reply_targets_interactor_returns_recipient_mapping() -> None:
+    chat = ChatCache(
+        id=uuid4(),
+        server_chat_id=uuid4(),
+        server_owner_id=uuid4(),
+        name="Group chat",
+        created_at=None,
+    )
+    general_message_uuid = uuid4()
+    targets = [
+        ChatReplyTargetDTO(user_id=uuid4(), message_id=uuid4()),
+        ChatReplyTargetDTO(user_id=uuid4(), message_id=uuid4()),
+    ]
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.chats_cache = [chat]
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.get_reply_targets = AsyncMock(return_value=targets)
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+            }
+        ),
+    )
+
+    result = await GetChatReplyTargetsInteractor()(
+        container,
+        chat,
+        general_message_uuid,
+    )
+
+    assert result == (
+        True,
+        "SUCCESS",
+        {target.user_id: target.message_id for target in targets},
+    )
+    assert chat_http_service.token == "access-token"
+    chat_http_service.get_reply_targets.assert_awaited_once_with(
+        chat.server_chat_id,
+        general_message_uuid,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_chat_reply_targets_interactor_rejects_missing_identity_early() -> None:
+    chat = ChatCache(
+        id=uuid4(),
+        server_chat_id=uuid4(),
+        server_owner_id=uuid4(),
+        name="Group chat",
+        created_at=None,
+    )
+    container = MagicMock(spec=AsyncContainer)
+
+    result = await GetChatReplyTargetsInteractor()(container, chat, None)
+
+    assert result == (
+        False,
+        "QUOTED CHAT MESSAGE HAS NO GENERAL MESSAGE UUID",
+        {},
+    )
+    container.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_chat_reply_targets_interactor_rejects_stale_chat_cache() -> None:
+    selected_chat = ChatCache(
+        id=uuid4(),
+        server_chat_id=uuid4(),
+        server_owner_id=uuid4(),
+        name="Stale chat",
+        created_at=None,
+    )
+    app_state = AppState()
+    app_state.token = "access-token"
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.get_reply_targets = AsyncMock()
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+            }
+        ),
+    )
+
+    result = await GetChatReplyTargetsInteractor()(
+        container,
+        selected_chat,
+        uuid4(),
+    )
+
+    assert result == (False, "CHAT CACHE IS NOT CURRENT", {})
+    chat_http_service.get_reply_targets.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duplicate_field", ["user", "message"])
+async def test_get_chat_reply_targets_interactor_rejects_duplicate_targets(
+    duplicate_field: str,
+) -> None:
+    chat = ChatCache(
+        id=uuid4(),
+        server_chat_id=uuid4(),
+        server_owner_id=uuid4(),
+        name="Group chat",
+        created_at=None,
+    )
+    first_target = ChatReplyTargetDTO(user_id=uuid4(), message_id=uuid4())
+    second_target = ChatReplyTargetDTO(
+        user_id=first_target.user_id if duplicate_field == "user" else uuid4(),
+        message_id=(
+            first_target.message_id if duplicate_field == "message" else uuid4()
+        ),
+    )
+    app_state = AppState()
+    app_state.token = "access-token"
+    app_state.chats_cache = [chat]
+    chat_http_service = MagicMock(spec=ChatHTTPService)
+    chat_http_service.get_reply_targets = AsyncMock(
+        return_value=[first_target, second_target]
+    )
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                ChatHTTPService: chat_http_service,
+            }
+        ),
+    )
+
+    result = await GetChatReplyTargetsInteractor()(container, chat, uuid4())
+
+    assert result == (
+        False,
+        f"CHAT REPLY TARGETS CONTAIN DUPLICATE {duplicate_field.upper()}S",
+        {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_chat_text_message_interactor_persists_one_general_message() -> None:
     timestamp = datetime.now(timezone.utc)
     local_user_id = uuid4()
     sender_server_id = uuid4()
@@ -1322,7 +1607,7 @@ async def test_send_chat_text_message_interactor_persists_one_logical_message() 
     second_recipient_id = uuid4()
     local_chat_id = uuid4()
     server_chat_id = uuid4()
-    logical_message_id = uuid4()
+    general_message_uuid = uuid4()
     local_chat = ChatDTO(
         id=local_chat_id,
         local_user_id=local_user_id,
@@ -1358,7 +1643,7 @@ async def test_send_chat_text_message_interactor_persists_one_logical_message() 
     deliveries = [
         SentChatMessageDeliveryDTO(
             id=uuid4(),
-            logical_message_id=logical_message_id,
+            general_message_uuid=general_message_uuid,
             recipient_id=recipient_id,
             timestamp=timestamp,
         )
@@ -1368,7 +1653,7 @@ async def test_send_chat_text_message_interactor_persists_one_logical_message() 
         id=uuid4(),
         local_user_id=local_user_id,
         server_message_id=deliveries[0].id,
-        logical_message_id=logical_message_id,
+        general_message_uuid=general_message_uuid,
         contact_id=None,
         chat_id=local_chat_id,
         content_type=MessageContentTypeEnum.TEXT,
@@ -1442,13 +1727,15 @@ async def test_send_chat_text_message_interactor_persists_one_logical_message() 
         sender_ed_private_key="sender-ed-private-key",
         sender_ecdh_private_key="sender-ecdh-private-key",
         sender_ecdh_public_key="sender-ecdh-public-key",
+        reply_to_general_message_uuid=None,
+        reply_targets=None,
     )
     message_service.add_message_text.assert_awaited_once()
     stored = message_service.add_message_text.await_args.args[0]
-    assert stored.logical_message_id == logical_message_id
+    assert stored.general_message_uuid == general_message_uuid
     assert stored.chat_id == local_chat_id
     assert len(chat_cache.messages) == 1
-    assert chat_cache.messages[0].logical_message_id == logical_message_id
+    assert chat_cache.messages[0].general_message_uuid == general_message_uuid
 
 
 @pytest.mark.asyncio

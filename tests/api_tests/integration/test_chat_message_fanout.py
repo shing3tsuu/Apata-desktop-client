@@ -13,10 +13,14 @@ from src.adapters.database.structures import ContactStatusEnum
 from src.adapters.encryption.storage import keyring_storage
 from src.presentation.interactors.login import (
     CacheConversationsInteractor,
+    SyncMessageHistoryInteractor,
     SynchronizeChatsInteractor,
     SynchronizeContactsInteractor,
 )
-from src.presentation.interactors.messenger import SendChatTextMessageInteractor
+from src.presentation.interactors.messenger import (
+    GetChatReplyTargetsInteractor,
+    SendChatTextMessageInteractor,
+)
 from src.providers.state import AppState
 from tests.api_tests.integration.test_login_synchronization import (
     InMemoryKeyring,
@@ -94,6 +98,7 @@ def test_chat_message_fanout_survives_recipients_next_login(chat_keyring) -> Non
         second_recipient_username = f"chat_second_{suffix}"
         password = "integration-password"
         plaintext = "fan-out message before recipient login synchronization"
+        reply_plaintext = "reply to the original fan-out message"
 
         try:
             owner = await _register_with_login_interactors(
@@ -198,13 +203,13 @@ def test_chat_message_fanout_survives_recipients_next_login(chat_keyring) -> Non
             )
             assert send_success, send_message
             assert sender_message is not None
-            assert sender_message.logical_message_id is not None
+            assert sender_message.general_message_uuid is not None
 
             sender_messages = await _read_chat_messages(owner_container, chat.id)
             assert len(sender_messages) == 1
             assert sender_messages[0].content == plaintext
-            assert sender_messages[0].logical_message_id == (
-                sender_message.logical_message_id
+            assert sender_messages[0].general_message_uuid == (
+                sender_message.general_message_uuid
             )
 
             async with owner_container() as request_container:
@@ -242,6 +247,10 @@ def test_chat_message_fanout_survives_recipients_next_login(chat_keyring) -> Non
                 "file_count": 0,
                 "failed_count": 0,
             }
+            first_cache_success, first_cache_message, _ = (
+                await CacheConversationsInteractor()(first_recipient_container)
+            )
+            assert first_cache_success, first_cache_message
 
             first_messages = await _read_chat_messages(
                 first_recipient_container,
@@ -258,13 +267,105 @@ def test_chat_message_fanout_survives_recipients_next_login(chat_keyring) -> Non
             assert first_messages[0].server_message_id != (
                 second_messages[0].server_message_id
             )
-            assert first_messages[0].logical_message_id == (
-                second_messages[0].logical_message_id
+            assert first_messages[0].general_message_uuid == (
+                second_messages[0].general_message_uuid
             )
-            assert first_messages[0].logical_message_id == (
-                sender_message.logical_message_id
+            assert first_messages[0].general_message_uuid == (
+                sender_message.general_message_uuid
             )
             assert first_messages[0].timestamp == second_messages[0].timestamp
+
+            async with first_recipient_container() as request_container:
+                first_state = await request_container.get(AppState)
+                first_chat_cache = next(
+                    cached_chat
+                    for cached_chat in first_state.chats_cache
+                    if cached_chat.server_chat_id == chat.id
+                )
+                quoted_message = next(
+                    message
+                    for message in first_chat_cache.messages
+                    if message.general_message_uuid
+                    == sender_message.general_message_uuid
+                )
+
+            (
+                targets_success,
+                targets_message,
+                reply_targets,
+            ) = await GetChatReplyTargetsInteractor()(
+                first_recipient_container,
+                first_chat_cache,
+                quoted_message.general_message_uuid,
+            )
+            assert targets_success, targets_message
+            assert reply_targets == {
+                first_recipient_id: first_messages[0].server_message_id,
+                second_recipient_id: second_messages[0].server_message_id,
+            }
+
+            (
+                reply_success,
+                reply_message,
+                sent_reply,
+            ) = await SendChatTextMessageInteractor()(
+                first_recipient_container,
+                first_chat_cache,
+                reply_plaintext,
+                quoted_message,
+                reply_targets,
+            )
+            assert reply_success, reply_message
+            assert sent_reply is not None
+            assert sent_reply.reply_to_id == quoted_message.id
+            assert sent_reply.reply_to_general_message_uuid == (
+                sender_message.general_message_uuid
+            )
+
+            owner_sync_success, owner_sync_message, owner_counts = (
+                await SyncMessageHistoryInteractor()(owner_container)
+            )
+            second_sync_success, second_sync_message, second_counts = (
+                await SyncMessageHistoryInteractor()(second_recipient_container)
+            )
+            assert owner_sync_success, owner_sync_message
+            assert second_sync_success, second_sync_message
+            assert owner_counts["text_count"] == 1
+            assert second_counts["text_count"] == 1
+
+            owner_messages = await _read_chat_messages(owner_container, chat.id)
+            second_messages = await _read_chat_messages(
+                second_recipient_container,
+                chat.id,
+            )
+            owner_original = next(
+                message for message in owner_messages if message.content == plaintext
+            )
+            owner_reply = next(
+                message
+                for message in owner_messages
+                if message.content == reply_plaintext
+            )
+            second_original = next(
+                message for message in second_messages if message.content == plaintext
+            )
+            second_reply = next(
+                message
+                for message in second_messages
+                if message.content == reply_plaintext
+            )
+            assert owner_reply.server_reply_to_id is None
+            assert owner_reply.reply_to_id == owner_original.id
+            assert owner_reply.reply_to_general_message_uuid == (
+                owner_original.general_message_uuid
+            )
+            assert second_reply.server_reply_to_id == (
+                second_original.server_message_id
+            )
+            assert second_reply.reply_to_id == second_original.id
+            assert second_reply.reply_to_general_message_uuid == (
+                second_original.general_message_uuid
+            )
 
             await _assert_contact_status(
                 first_recipient_container,

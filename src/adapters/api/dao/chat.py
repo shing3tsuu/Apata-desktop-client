@@ -1,5 +1,5 @@
-from typing import Any
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from src.exceptions import APIError
@@ -91,6 +91,20 @@ class ChatHTTPDAO:
         self._http_client.set_auth_token(token)
         return self._expect_list(
             await self._http_client.get(f"/chats/{chat_id}/participants")
+        )
+
+    async def get_reply_targets(
+        self,
+        chat_id: UUID,
+        general_message_uuid: UUID,
+        token: str,
+    ) -> list[dict[str, Any]]:
+        self._http_client.set_auth_token(token)
+        return self._expect_list(
+            await self._http_client.get(
+                f"/chats/{chat_id}/messages/"
+                f"{general_message_uuid}/reply-targets"
+            )
         )
 
     async def get_events(

@@ -8,7 +8,12 @@ import pytest
 from dishka import Scope, make_async_container
 
 from src.adapters.api.dao import AuthHTTPDAO
-from src.adapters.api.service import AuthHTTPService, ContactHTTPService, FileHTTPService, MessageHTTPService
+from src.adapters.api.service import (
+    AuthHTTPService,
+    ContactHTTPService,
+    FileHTTPService,
+    MessageHTTPService,
+)
 from src.adapters.encryption.service import EncryptionService
 from src.providers import AppProvider
 from tests.timing_wrapper import timer
@@ -85,7 +90,7 @@ def test_send_multiple_text_and_one_file_message_to_user_222() -> None:
                 plaintexts = ["Hello", "How are you?", "Test message"]
                 for plaintext in plaintexts:
                     ephemeral_keys = await encryption_service.generate_key_pairs()
-                    msg_id = await message_service.send_encrypted_message_text(
+                    sent_message = await message_service.send_encrypted_message_text(
                         recipient_id=receiver_id,
                         chat_id=None,
                         message=plaintext,
@@ -94,7 +99,7 @@ def test_send_multiple_text_and_one_file_message_to_user_222() -> None:
                         sender_ecdh_private_key=ephemeral_keys.ecdh_private_key,
                         ephemeral_ecdh_public_key=ephemeral_keys.ecdh_public_key,
                     )
-                    assert msg_id is not None, "Text message ID is None"
+                    assert sent_message is not None, "Text message response is None"
 
                 file_content = TEST_IMAGE_PATH.read_bytes()
                 ephemeral_keys = await encryption_service.generate_key_pairs()

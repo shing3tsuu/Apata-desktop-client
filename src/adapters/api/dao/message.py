@@ -2,7 +2,11 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from src.adapters.api.dto import ChatMessageBatchDTO, MessageProcessingResultDTO
+from src.adapters.api.dto import (
+    ChatMessageBatchDTO,
+    MessageProcessingResultDTO,
+    SentDirectMessageDTO,
+)
 from src.exceptions import APIError
 
 from .common import CommonHTTPClient
@@ -43,7 +47,8 @@ class MessageHTTPDAO:
         ephemeral_public_key: str,
         ephemeral_signature: str,
         token: str,
-    ) -> None:
+        reply_to_id: UUID | None = None,
+    ) -> SentDirectMessageDTO:
         self._http_client.set_auth_token(token)
         data = {
             "recipient_id": str(recipient_id),
@@ -53,8 +58,10 @@ class MessageHTTPDAO:
             "content_type": content_type,
             "ephemeral_public_key": ephemeral_public_key,
             "ephemeral_signature": ephemeral_signature,
+            "reply_to_id": str(reply_to_id) if reply_to_id is not None else None,
         }
-        await self._http_client.post("/send", data)
+        response = self._expect_object(await self._http_client.post("/send", data))
+        return SentDirectMessageDTO.from_mapping(response)
 
     async def send_chat_message_text(
         self,

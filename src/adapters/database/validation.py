@@ -64,7 +64,6 @@ def is_valid_file_name(v: Any) -> bool:
         and "/" not in v
         and "\\" not in v
         and v not in {".", ".."}
-        and "." not in v
     )
 
 

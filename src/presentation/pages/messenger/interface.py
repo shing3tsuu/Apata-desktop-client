@@ -4,21 +4,26 @@ from datetime import datetime
 from uuid import UUID
 
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QWidget,
 )
 
 from src.adapters.api.dto import ContactPublicDTO
 from src.adapters.database.dto import ContactDTO
-from src.adapters.database.structures import ContactStatusEnum
+from src.adapters.database.structures import ContactStatusEnum, MessageContentTypeEnum
 from src.presentation.interactors.messenger import (
     AcceptContactRequestInteractor,
     AddChatParticipantInteractor,
     BlacklistContactInteractor,
     CreateChatInteractor,
+    GetChatReplyTargetsInteractor,
+    LoadConversationFileMessagesInteractor,
+    SaveMessageFileToDiskInteractor,
     SearchContactsGlobalInteractor,
     SearchContactsLocalInteractor,
     SendChatTextMessageInteractor,
+    SendContactFileMessageInteractor,
     SendContactRequestInteractor,
     SendContactTextMessageInteractor,
 )
@@ -26,6 +31,7 @@ from src.providers.cache import ChatCache, ContactCache
 from src.providers.state import AppState
 
 from .demo_data import build_demo_conversations
+from .fields import ReplySelection
 from .panels import ContactsPanel, MessagesPanel, PanelDivider
 from .theme import (
     COLOR_BACKGROUND,
@@ -49,11 +55,11 @@ class MessengerInterface(QWidget):
         self._contacts: list[ContactCache] = []
         self._chats: list[ChatCache] = []
         self._current_user_id: UUID | None = None
+        self._current_username: str | None = None
         self._search_task: asyncio.Task[None] | None = None
         self._chat_creation_task: asyncio.Task[None] | None = None
-        self._chat_participant_tasks: dict[
-            tuple[UUID, UUID], asyncio.Task[None]
-        ] = {}
+        self._file_loading_task: asyncio.Task[None] | None = None
+        self._chat_participant_tasks: dict[tuple[UUID, UUID], asyncio.Task[None]] = {}
         self._message_tasks: set[asyncio.Task[None]] = set()
         self._contact_action_tasks: set[asyncio.Task[None]] = set()
         self.setup_ui()
@@ -89,9 +95,7 @@ class MessengerInterface(QWidget):
             COLOR_DIVIDER,
         )
         root_layout.addWidget(self.messages_panel, stretch=7)
-        self.contacts_panel.conversation_selected.connect(
-            self.messages_panel.show_conversation
-        )
+        self.contacts_panel.conversation_selected.connect(self._show_conversation)
         self.contacts_panel.contact_action_requested.connect(
             self._handle_contact_action
         )
@@ -103,12 +107,14 @@ class MessengerInterface(QWidget):
         )
         self.contacts_panel.search_requested.connect(self._schedule_search)
         self.contacts_panel.search_cleared.connect(self._cancel_search)
-        self.contacts_panel.create_chat_requested.connect(
-            self._schedule_chat_creation
-        )
+        self.contacts_panel.create_chat_requested.connect(self._schedule_chat_creation)
         self.messages_panel.text_message_send_requested.connect(
             self._schedule_text_message
         )
+        self.messages_panel.file_message_send_requested.connect(
+            self._schedule_file_message
+        )
+        self.messages_panel.file_save_requested.connect(self._schedule_file_save)
         self.messages_panel.chat_participant_add_requested.connect(
             self._schedule_chat_participant_addition
         )
@@ -121,15 +127,15 @@ class MessengerInterface(QWidget):
         contact: ContactCache,
     ) -> None:
         if self.main_window is None or self.main_window.container is None:
-            logger.warning("Cannot perform contact action without application container")
+            logger.warning(
+                "Cannot perform contact action without application container"
+            )
             return
         if action not in {"send_request", "accept_request", "block"}:
             logger.warning("Unsupported contact action: %s", action)
             return
 
-        task = asyncio.create_task(
-            self._execute_contact_action(action, contact)
-        )
+        task = asyncio.create_task(self._execute_contact_action(action, contact))
         self._contact_action_tasks.add(task)
         task.add_done_callback(self._contact_action_tasks.discard)
 
@@ -177,8 +183,7 @@ class MessengerInterface(QWidget):
             return
 
         if all(
-            cached.server_user_id != contact.server_user_id
-            for cached in self._contacts
+            cached.server_user_id != contact.server_user_id for cached in self._contacts
         ):
             self._contacts.append(contact)
         self.messages_panel.set_available_contacts(
@@ -196,6 +201,7 @@ class MessengerInterface(QWidget):
             contacts = app_state.contacts_cache
             chats = app_state.chats_cache
             self._current_user_id = app_state.server_user_id
+            self._current_username = app_state.username
         show_demo = not contacts and not chats
         if show_demo:
             contacts, chats = build_demo_conversations()
@@ -205,8 +211,9 @@ class MessengerInterface(QWidget):
             self._contacts,
             self._current_user_id,
         )
+        self.messages_panel.set_current_user(self._current_username)
         self.contacts_panel.set_conversations(self._contacts, self._chats)
-        self.messages_panel.show_conversation(None)
+        self._show_conversation(None)
         if show_demo:
             self.contacts_panel.select_first_conversation()
 
@@ -226,11 +233,13 @@ class MessengerInterface(QWidget):
             self._contacts = app_state.contacts_cache
             self._chats = app_state.chats_cache
             self._current_user_id = app_state.server_user_id
+            self._current_username = app_state.username
 
         self.messages_panel.set_available_contacts(
             self._contacts,
             self._current_user_id,
         )
+        self.messages_panel.set_current_user(self._current_username)
         self.contacts_panel.set_conversations(self._contacts, self._chats)
         replacement: ContactCache | ChatCache | None = next(
             (
@@ -250,7 +259,7 @@ class MessengerInterface(QWidget):
                 None,
             )
         if replacement is not None:
-            self.messages_panel.show_conversation(
+            self._show_conversation(
                 replacement,
                 preserve_chat_members_panel=True,
             )
@@ -262,7 +271,80 @@ class MessengerInterface(QWidget):
                         anchor,
                     )
         elif selected is not None:
-            self.messages_panel.show_conversation(None)
+            self._show_conversation(None)
+
+    def _show_conversation(
+        self,
+        conversation: ContactCache | ChatCache | None,
+        *,
+        preserve_chat_members_panel: bool = False,
+    ) -> None:
+        self.messages_panel.show_conversation(
+            conversation,
+            preserve_chat_members_panel=preserve_chat_members_panel,
+        )
+        self._schedule_file_loading(conversation)
+
+    def _schedule_file_loading(
+        self,
+        conversation: ContactCache | ChatCache | None,
+    ) -> None:
+        if self._file_loading_task is not None and not self._file_loading_task.done():
+            self._file_loading_task.cancel()
+        self._file_loading_task = None
+
+        if not isinstance(conversation, ContactCache):
+            return
+        if self.main_window is None or self.main_window.container is None:
+            return
+
+        message_ids = [
+            message.id
+            for message in conversation.messages
+            if message.content_type == MessageContentTypeEnum.IMAGE
+        ]
+        if not message_ids:
+            return
+
+        task = asyncio.create_task(
+            self._load_conversation_files(conversation, message_ids)
+        )
+        self._file_loading_task = task
+        task.add_done_callback(self._finish_file_loading)
+
+    def _finish_file_loading(self, task: asyncio.Task[None]) -> None:
+        if self._file_loading_task is task:
+            self._file_loading_task = None
+
+    async def _load_conversation_files(
+        self,
+        conversation: ContactCache,
+        message_ids: list[UUID],
+    ) -> None:
+        try:
+            (
+                success,
+                status_message,
+                contents,
+            ) = await LoadConversationFileMessagesInteractor()(
+                self.main_window.container,
+                message_ids,
+            )
+            if not success:
+                logger.warning(
+                    "Failed to load conversation files for %s: %s",
+                    conversation.server_user_id,
+                    status_message,
+                )
+                return
+            self.messages_panel.set_loaded_file_contents(conversation, contents)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Unexpected conversation file loading error for %s",
+                conversation.server_user_id,
+            )
 
     def _schedule_search(
         self,
@@ -286,10 +368,7 @@ class MessengerInterface(QWidget):
         self._search_task = None
 
     def _schedule_chat_creation(self, name: str) -> None:
-        if (
-            self._chat_creation_task is not None
-            and not self._chat_creation_task.done()
-        ):
+        if self._chat_creation_task is not None and not self._chat_creation_task.done():
             return
         if self.main_window is None or self.main_window.container is None:
             logger.warning("Cannot create a chat without application container")
@@ -341,9 +420,7 @@ class MessengerInterface(QWidget):
             )
             return
 
-        task = asyncio.create_task(
-            self._add_chat_participant(chat, contact)
-        )
+        task = asyncio.create_task(self._add_chat_participant(chat, contact))
         self._chat_participant_tasks[key] = task
         task.add_done_callback(
             lambda completed, task_key=key: self._finish_chat_participant_task(
@@ -405,6 +482,7 @@ class MessengerInterface(QWidget):
         request_id: UUID,
         conversation: ContactCache | ChatCache,
         text: str,
+        reply: ReplySelection | None,
     ) -> None:
         if self.main_window is None or self.main_window.container is None:
             self.messages_panel.finish_text_message(
@@ -415,7 +493,7 @@ class MessengerInterface(QWidget):
             return
 
         task = asyncio.create_task(
-            self._send_text_message(request_id, conversation, text)
+            self._send_text_message(request_id, conversation, text, reply)
         )
         self._message_tasks.add(task)
         task.add_done_callback(self._message_tasks.discard)
@@ -425,19 +503,57 @@ class MessengerInterface(QWidget):
         request_id: UUID,
         conversation: ContactCache | ChatCache,
         text: str,
+        reply: ReplySelection | None,
     ) -> None:
         try:
+            reply_to_message = None
+            if reply is not None:
+                reply_to_message = next(
+                    (
+                        message
+                        for message in conversation.messages
+                        if message.id == reply.local_message_id
+                        and message.server_message_id == reply.server_message_id
+                    ),
+                    None,
+                )
+                if reply_to_message is None:
+                    self.messages_panel.finish_text_message(
+                        request_id,
+                        False,
+                        failure_message="REPLY TARGET IS NOT AVAILABLE",
+                    )
+                    return
             if isinstance(conversation, ContactCache):
                 result = await SendContactTextMessageInteractor()(
                     self.main_window.container,
                     conversation,
                     text,
+                    reply_to_message,
                 )
             else:
+                reply_targets: dict[UUID, UUID] | None = None
+                if reply_to_message is not None:
+                    targets_success, targets_status, reply_targets = (
+                        await GetChatReplyTargetsInteractor()(
+                            self.main_window.container,
+                            conversation,
+                            reply_to_message.general_message_uuid,
+                        )
+                    )
+                    if not targets_success:
+                        self.messages_panel.finish_text_message(
+                            request_id,
+                            False,
+                            failure_message=targets_status,
+                        )
+                        return
                 result = await SendChatTextMessageInteractor()(
                     self.main_window.container,
                     conversation,
                     text,
+                    reply_to_message,
+                    reply_targets,
                 )
             success, status_message, saved_message = result
             server_message_id = (
@@ -450,6 +566,7 @@ class MessengerInterface(QWidget):
                 success,
                 server_message_id,
                 status_message if not success else None,
+                saved_message.id if success and saved_message is not None else None,
             )
             if success:
                 self.contacts_panel.refresh_conversation(conversation)
@@ -472,6 +589,124 @@ class MessengerInterface(QWidget):
                 False,
                 failure_message=str(error).upper(),
             )
+
+    def _schedule_file_message(
+        self,
+        request_id: UUID,
+        contact: ContactCache,
+        file_path: str,
+    ) -> None:
+        if self.main_window is None or self.main_window.container is None:
+            self.messages_panel.finish_file_message(
+                request_id,
+                False,
+                failure_message="APPLICATION CONTAINER IS NOT AVAILABLE",
+            )
+            return
+
+        task = asyncio.create_task(
+            self._send_file_message(request_id, contact, file_path)
+        )
+        self._message_tasks.add(task)
+        task.add_done_callback(self._message_tasks.discard)
+
+    async def _send_file_message(
+        self,
+        request_id: UUID,
+        contact: ContactCache,
+        file_path: str,
+    ) -> None:
+        try:
+            (
+                success,
+                status_message,
+                saved_message,
+            ) = await SendContactFileMessageInteractor()(
+                self.main_window.container,
+                contact,
+                file_path,
+            )
+            server_message_id = (
+                saved_message.server_message_id
+                if success and saved_message is not None
+                else None
+            )
+            self.messages_panel.finish_file_message(
+                request_id,
+                success,
+                server_message_id,
+                status_message if not success else None,
+                saved_message.id if success and saved_message is not None else None,
+            )
+            if success:
+                self.contacts_panel.refresh_conversation(contact)
+            else:
+                logger.warning(
+                    "Failed to send a file message to %s: %s",
+                    contact.server_user_id,
+                    status_message,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.exception("Unexpected file message sending error")
+            self.messages_panel.finish_file_message(
+                request_id,
+                False,
+                failure_message=str(error).upper(),
+            )
+
+    def _schedule_file_save(
+        self,
+        message_id: UUID,
+        suggested_name: str,
+    ) -> None:
+        if self.main_window is None or self.main_window.container is None:
+            logger.warning("Cannot save a file without application container")
+            return
+
+        destination_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "SAVE FILE",
+            suggested_name,
+            "ALL FILES (*)",
+        )
+        if not destination_path:
+            return
+
+        task = asyncio.create_task(
+            self._save_message_file(message_id, destination_path)
+        )
+        self._message_tasks.add(task)
+        task.add_done_callback(self._message_tasks.discard)
+
+    async def _save_message_file(
+        self,
+        message_id: UUID,
+        destination_path: str,
+    ) -> None:
+        try:
+            (
+                success,
+                status_message,
+                saved_path,
+            ) = await SaveMessageFileToDiskInteractor()(
+                self.main_window.container,
+                message_id,
+                destination_path,
+            )
+            if success:
+                logger.info("File saved to %s", saved_path)
+                return
+            logger.warning(
+                "Failed to save message file %s: %s",
+                message_id,
+                status_message,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Unexpected message file saving error")
 
     async def _search_contacts(self, query: str, global_search: bool) -> None:
         current_task = asyncio.current_task()

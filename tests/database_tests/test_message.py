@@ -196,6 +196,7 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
         AddMessageTextDTO(
             local_user_id=test_user.id,
             server_message_id=uuid.uuid7(),
+            general_message_uuid=uuid.uuid7(),
             contact_id=test_contact.id,
             chat_id=chat.id,
             content="Group text",
@@ -207,6 +208,7 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
         AddMessageFileDTO(
             local_user_id=test_user.id,
             server_message_id=uuid.uuid7(),
+            general_message_uuid=uuid.uuid7(),
             chat_id=chat.id,
             file_name="attachment",
             file_content=b"file payload",
@@ -271,6 +273,187 @@ async def test_mark_messages_failed_updates_outgoing_messages(
     assert updated == 1
     assert messages[0].id == saved.id
     assert messages[0].failed is True
+
+
+@pytest.mark.asyncio
+async def test_direct_reply_resolves_local_target_immediately(
+    message_service,
+    test_user,
+    test_contact,
+    master_key,
+):
+    message_service.master_key = master_key
+    target_server_id = uuid.uuid7()
+    target = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=target_server_id,
+            contact_id=test_contact.id,
+            content="Quoted message",
+            is_outgoing=False,
+        )
+    )
+
+    reply = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=uuid.uuid7(),
+            server_reply_to_id=target_server_id,
+            contact_id=test_contact.id,
+            content="Reply body",
+            is_outgoing=True,
+        )
+    )
+
+    assert reply.server_reply_to_id == target_server_id
+    assert reply.reply_to_id == target.id
+
+
+@pytest.mark.asyncio
+async def test_direct_reply_resolves_when_target_arrives_later(
+    message_service,
+    test_user,
+    test_contact,
+    master_key,
+):
+    message_service.master_key = master_key
+    target_server_id = uuid.uuid7()
+    reply = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=uuid.uuid7(),
+            server_reply_to_id=target_server_id,
+            contact_id=test_contact.id,
+            content="Reply received first",
+            is_outgoing=False,
+        )
+    )
+    assert reply.reply_to_id is None
+
+    target = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=target_server_id,
+            contact_id=test_contact.id,
+            content="Quoted message received later",
+            is_outgoing=True,
+        )
+    )
+    messages = await message_service.get_messages(
+        test_user.id,
+        test_contact.id,
+    )
+    resolved_reply = next(message for message in messages if message.id == reply.id)
+
+    assert resolved_reply.server_reply_to_id == target_server_id
+    assert resolved_reply.reply_to_id == target.id
+
+
+@pytest.mark.asyncio
+async def test_chat_reply_resolves_original_authors_outgoing_message_by_general_uuid(
+    container,
+    message_service,
+    test_user,
+    master_key,
+):
+    message_service.master_key = master_key
+    async with container() as request_container:
+        chat_service = await request_container.get(ChatService)
+        chat = await chat_service.add_chat(
+            AddChatDTO(
+                local_user_id=test_user.id,
+                server_chat_id=uuid4(),
+                name="Reply fallback chat",
+            )
+        )
+
+    quoted_general_uuid = uuid.uuid7()
+    quoted = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=uuid.uuid7(),
+            general_message_uuid=quoted_general_uuid,
+            chat_id=chat.id,
+            content="My original message",
+            is_outgoing=True,
+        )
+    )
+    reply = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=uuid.uuid7(),
+            general_message_uuid=uuid.uuid7(),
+            reply_to_general_message_uuid=quoted_general_uuid,
+            chat_id=chat.id,
+            content="Reply from another participant",
+            is_outgoing=False,
+        )
+    )
+
+    assert reply.server_reply_to_id is None
+    assert reply.reply_to_general_message_uuid == quoted_general_uuid
+    assert reply.reply_to_id == quoted.id
+
+
+@pytest.mark.asyncio
+async def test_contact_cache_loads_reply_target_older_than_recent_window(
+    container,
+    message_service,
+    test_user,
+    test_contact,
+    master_key,
+):
+    message_service.master_key = master_key
+    async with container() as request_container:
+        app_state = await request_container.get(AppState)
+        app_state.local_user_id = test_user.id
+        app_state.master_key = master_key
+        app_state.username = test_user.username
+
+    started_at = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    target_server_id = uuid.uuid7()
+    target = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=target_server_id,
+            contact_id=test_contact.id,
+            content="Old quoted message",
+            timestamp=started_at,
+            is_outgoing=True,
+        )
+    )
+    for index in range(10):
+        await message_service.add_message_text(
+            AddMessageTextDTO(
+                local_user_id=test_user.id,
+                server_message_id=uuid.uuid7(),
+                contact_id=test_contact.id,
+                content=f"Filler {index}",
+                timestamp=started_at + timedelta(minutes=index + 1),
+                is_outgoing=True,
+            )
+        )
+    reply = await message_service.add_message_text(
+        AddMessageTextDTO(
+            local_user_id=test_user.id,
+            server_message_id=uuid.uuid7(),
+            server_reply_to_id=target_server_id,
+            contact_id=test_contact.id,
+            content="Recent reply",
+            timestamp=started_at + timedelta(minutes=11),
+            is_outgoing=True,
+        )
+    )
+
+    success, message, _ = await CacheConversationsInteractor()(container)
+
+    assert success, message
+    cached_messages = app_state.contacts_cache[0].messages
+    assert target.id not in {cached.id for cached in cached_messages}
+    cached_reply = next(cached for cached in cached_messages if cached.id == reply.id)
+    assert cached_reply.reply_to_id == target.id
+    assert cached_reply.reply_author == test_user.username
+    assert cached_reply.reply_text == "Old quoted message"
 
 
 @pytest.mark.asyncio
@@ -544,6 +727,14 @@ async def test_add_message_file_real_image(
     )
     assert len(retrieved) == 1
     assert retrieved[0].file_content == original_bytes
+
+    retrieved_by_id = await message_service.get_file_messages(
+        local_user_id=test_user.id,
+        message_ids=[saved.id],
+    )
+    assert len(retrieved_by_id) == 1
+    assert retrieved_by_id[0].id == saved.id
+    assert retrieved_by_id[0].file_content == original_bytes
 
     # Опционально сохраняем расшифрованный файл для визуальной проверки
     output_path = Path("tests/test_data/output/decrypted_from_db_image.png")

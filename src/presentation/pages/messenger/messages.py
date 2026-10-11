@@ -66,6 +66,54 @@ def _as_local(timestamp: datetime) -> datetime:
     return _as_utc(timestamp).astimezone()
 
 
+def _message_context_menu_stylesheet(color_primary: str) -> str:
+    return f"""
+        QMenu {{
+            background-color: {COLOR_CONTEXT_MENU_BACKGROUND};
+            border: 1px solid {color_primary};
+            border-radius: 4px;
+            padding: 4px;
+        }}
+        QMenu::item {{
+            color: {color_primary};
+            padding: 7px 26px;
+            font-family: 'Roboto';
+            font-size: 12px;
+        }}
+        QMenu::item:selected {{
+            background-color: {color_primary};
+            color: {COLOR_CONTEXT_MENU_BACKGROUND};
+        }}
+    """
+
+
+def _create_media_context_menu(parent: QWidget, color_primary: str) -> QMenu:
+    menu = QMenu(parent)
+    menu.setStyleSheet(_message_context_menu_stylesheet(color_primary))
+    for label, action_name in (
+        ("⌫ DELETE", "delete"),
+        ("↹ FORWARD", "forward"),
+        ("↪ REPLY", "reply"),
+        ("⇩ SAVE TO DISK", "save_to_disk"),
+    ):
+        action = menu.addAction(label)
+        action.setData(action_name)
+    return menu
+
+
+def _exec_media_context_menu(
+    parent: QWidget,
+    pos,
+    color_primary: str,
+) -> str | None:
+    menu = _create_media_context_menu(parent, color_primary)
+    selected_action = menu.exec(parent.mapToGlobal(pos))
+    if selected_action is None:
+        return None
+    action_name = selected_action.data()
+    return action_name if isinstance(action_name, str) else None
+
+
 class LoadingSpinner(QWidget):
     def __init__(self, parent=None, size=14, color: str = COLOR_LOADING_SPINNER):
         super().__init__(parent)
@@ -147,13 +195,17 @@ class MessageBubble(QWidget):
         color_inactive: str,
         color_error: str,
         color_third: str,
+        local_message_id: UUID | None = None,
         timestamp: datetime | None = None,
         status: str = "",
         author: str | None = None,
+        reply_author: str | None = None,
+        reply_text: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self.server_message_id = server_message_id
+        self.local_message_id = local_message_id
         self.text = text
         self.is_mine = is_mine
         self.color_primary = color_primary
@@ -164,6 +216,8 @@ class MessageBubble(QWidget):
         self.timestamp = _as_utc(timestamp)
         self.status = status
         self.author = author
+        self.reply_author = reply_author
+        self.reply_text = reply_text
 
         if self.is_mine:
             if self.status == "failed":
@@ -182,15 +236,21 @@ class MessageBubble(QWidget):
         self._font = QFont("Roboto", 11)
         self._meta_font = QFont("Roboto", 8)
         self._author_font = QFont("Roboto", 9, QFont.Weight.DemiBold)
+        self._reply_author_font = QFont("Roboto", 8, QFont.Weight.DemiBold)
+        self._reply_text_font = QFont("Roboto", 9)
         self._padding_x = 18
         self._padding_y = 10
         self._bubble_max_width = 420
         self._tw = 8
         self._meta_h = 20
 
-        _, text_height, author_height = self._content_size()
+        _, text_height, author_height, reply_height = self._content_size()
         bubble_h = (
-            text_height + author_height + self._padding_y * 2 + self._meta_h
+            text_height
+            + author_height
+            + reply_height
+            + self._padding_y * 2
+            + self._meta_h
         )
         self.setFixedHeight(bubble_h + 20)
 
@@ -227,14 +287,18 @@ class MessageBubble(QWidget):
         self._update_spinner_pos()
 
     def _get_bubble_size(self):
-        content_width, text_height, author_height = self._content_size()
+        content_width, text_height, author_height, reply_height = self._content_size()
         bubble_w = content_width + self._padding_x * 2
         bubble_h = (
-            text_height + author_height + self._padding_y * 2 + self._meta_h
+            text_height
+            + author_height
+            + reply_height
+            + self._padding_y * 2
+            + self._meta_h
         )
         return bubble_w, bubble_h
 
-    def _content_size(self) -> tuple[int, int, int]:
+    def _content_size(self) -> tuple[int, int, int, int]:
         maximum_content_width = self._bubble_max_width - self._padding_x * 2
         text_metrics = QFontMetrics(self._font)
         text_width = min(
@@ -256,7 +320,29 @@ class MessageBubble(QWidget):
                 author_metrics.horizontalAdvance(self.author),
                 maximum_content_width,
             )
-        return max(text_width, author_width), text_height, author_height
+        reply_height = 0
+        reply_width = 0
+        if self.reply_author and self.reply_text:
+            reply_height = 40
+            reply_author_metrics = QFontMetrics(self._reply_author_font)
+            reply_text_metrics = QFontMetrics(self._reply_text_font)
+            reply_width = min(
+                max(
+                    reply_author_metrics.horizontalAdvance(self.reply_author),
+                    reply_text_metrics.horizontalAdvance(
+                        " ".join(self.reply_text.split())
+                    ),
+                )
+                + 24,
+                maximum_content_width,
+            )
+            reply_width = max(144, reply_width)
+        return (
+            max(text_width, author_width, reply_width),
+            text_height,
+            author_height,
+            reply_height,
+        )
 
     def _update_spinner_pos(self):
         if not self.is_mine:
@@ -312,10 +398,14 @@ class MessageBubble(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(self._font)
 
-        content_width, text_height, author_height = self._content_size()
+        content_width, text_height, author_height, reply_height = self._content_size()
         bubble_w = content_width + self._padding_x * 2
         bubble_h = (
-            text_height + author_height + self._padding_y * 2 + self._meta_h
+            text_height
+            + author_height
+            + reply_height
+            + self._padding_y * 2
+            + self._meta_h
         )
         tw = self._tw
         margin = 16
@@ -364,6 +454,60 @@ class MessageBubble(QWidget):
             )
             content_y += author_height
 
+        if self.reply_author and self.reply_text:
+            quote_rect = QRect(
+                content_x - 1,
+                content_y,
+                content_width,
+                reply_height - 4,
+            )
+            quote_background = QColor(COLOR_MESSAGE_TEXT)
+            quote_background.setAlpha(28)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(quote_background)
+            painter.drawRoundedRect(quote_rect, 4, 4)
+
+            accent_pen = QPen(QColor(self.color_primary))
+            accent_pen.setWidth(3)
+            painter.setPen(accent_pen)
+            painter.drawLine(
+                quote_rect.left() + 3,
+                quote_rect.top() + 4,
+                quote_rect.left() + 3,
+                quote_rect.bottom() - 4,
+            )
+
+            quote_text_x = quote_rect.left() + 10
+            quote_text_width = max(1, quote_rect.width() - 14)
+            painter.setPen(QColor(COLOR_MESSAGE_TEXT))
+            painter.setFont(self._reply_author_font)
+            displayed_reply_author = QFontMetrics(self._reply_author_font).elidedText(
+                self.reply_author,
+                Qt.TextElideMode.ElideRight,
+                quote_text_width,
+            )
+            painter.drawText(
+                QRect(quote_text_x, quote_rect.top() + 1, quote_text_width, 16),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                displayed_reply_author,
+            )
+
+            painter.setFont(self._reply_text_font)
+            displayed_reply_text = QFontMetrics(self._reply_text_font).elidedText(
+                " ".join(self.reply_text.split()),
+                Qt.TextElideMode.ElideRight,
+                quote_text_width,
+            )
+            reply_color = QColor(COLOR_MESSAGE_TEXT)
+            reply_color.setAlphaF(0.82)
+            painter.setPen(reply_color)
+            painter.drawText(
+                QRect(quote_text_x, quote_rect.top() + 17, quote_text_width, 16),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                displayed_reply_text,
+            )
+            content_y += reply_height
+
         painter.setPen(QColor(COLOR_MESSAGE_TEXT))
         painter.setFont(self._font)
         painter.drawText(
@@ -410,10 +554,14 @@ class MessageBubble(QWidget):
     def _bubble_path(self) -> QPainterPath:
         # Returns the path of the bubble hexagon in widget coordinates.
 
-        content_width, text_height, author_height = self._content_size()
+        content_width, text_height, author_height, reply_height = self._content_size()
         bubble_w = content_width + self._padding_x * 2
         bubble_h = (
-            text_height + author_height + self._padding_y * 2 + self._meta_h
+            text_height
+            + author_height
+            + reply_height
+            + self._padding_y * 2
+            + self._meta_h
         )
         tw = self._tw
         margin = 16
@@ -444,35 +592,7 @@ class MessageBubble(QWidget):
 
     def _show_context_menu(self, pos):
         menu = QMenu(self)
-        menu.setStyleSheet(
-            """
-            QMenu {
-                background-color: """
-            + COLOR_CONTEXT_MENU_BACKGROUND
-            + ";" + """
-                border: 1px solid """
-            + self.color_primary
-            + """;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QMenu::item {
-                color: """
-            + self.color_primary
-            + """;
-                padding: 6px 24px;
-                font-size: 12px;
-            }
-            QMenu::item:selected {
-                background-color: """
-            + self.color_primary
-            + """;
-                color: """
-            + COLOR_TEXT_ON_PRIMARY
-            + ";" + """
-            }
-        """
-        )
+        menu.setStyleSheet(_message_context_menu_stylesheet(self.color_primary))
         copy_action = menu.addAction("⛘ COPY")
         delete_action = menu.addAction("⌫ DELETE")
         forward_action = menu.addAction("↹ FORWARD")
@@ -483,9 +603,7 @@ class MessageBubble(QWidget):
             print(self.text.replace("‹ ", "").replace(" ›", ""))
             clipboard = QApplication.clipboard()
             if clipboard is not None:
-                clipboard.setText(
-                    self.text.replace("‹ ", "").replace(" ›", "")
-                )
+                clipboard.setText(self.text.replace("‹ ", "").replace(" ›", ""))
             self.context_action.emit("copy_text")
         elif action == delete_action:
             print(f"Deleting message {self.server_message_id}")
@@ -559,9 +677,12 @@ class ImageViewer(QWidget):
 
 
 class ImageBubble(QWidget):
+    context_action = pyqtSignal(str)
+    delete_requested = pyqtSignal(object)
+
     def __init__(
         self,
-        path: str,
+        path: str | None,
         is_mine: bool,
         color_primary: str,
         color_outgoing: str,
@@ -570,9 +691,13 @@ class ImageBubble(QWidget):
         color_third: str,  # серый (цвет отправки)
         timestamp: datetime | None = None,
         status: str = "",
+        server_message_id: UUID | None = None,
         parent=None,
+        *,
+        image_data: bytes | None = None,
     ):
         super().__init__(parent)
+        self.server_message_id = server_message_id
         self.path = path
         self.is_mine = is_mine
         self.color_primary = color_primary
@@ -604,8 +729,13 @@ class ImageBubble(QWidget):
         self._padding_y = 12
         self._meta_h = 18
 
-        # Загружаем и масштабируем изображение
-        self._pixmap = QPixmap(path)
+        self._full_pixmap = QPixmap()
+        if image_data is not None:
+            self._full_pixmap.loadFromData(image_data)
+        elif path is not None:
+            self._full_pixmap = QPixmap(path)
+
+        self._pixmap = self._full_pixmap
         if not self._pixmap.isNull():
             self._pixmap = self._pixmap.scaled(
                 self._max_img_w,
@@ -628,6 +758,10 @@ class ImageBubble(QWidget):
         if self.is_mine and self.status == "":
             self.spinner.start()
         self._update_spinner_pos()
+
+    @property
+    def has_image(self) -> bool:
+        return not self._full_pixmap.isNull()
 
     def set_status(self, new_status: str):
         if self.status == new_status:
@@ -660,6 +794,23 @@ class ImageBubble(QWidget):
             return self.width() - self._bubble_w - self._margin
         else:
             return self._margin
+
+    def _bubble_path(self) -> QPainterPath:
+        bx = self._bubble_x()
+        by = 4
+        bw = self._bubble_w
+        bh = self._bubble_h
+        tw = self._tw
+
+        path = QPainterPath()
+        path.moveTo(bx + tw, by)
+        path.lineTo(bx, by + bh / 2)
+        path.lineTo(bx + tw, by + bh)
+        path.lineTo(bx + bw - tw, by + bh)
+        path.lineTo(bx + bw, by + bh / 2)
+        path.lineTo(bx + bw - tw, by)
+        path.closeSubpath()
+        return path
 
     def _update_spinner_pos(self):
         if not self.is_mine:
@@ -715,20 +866,11 @@ class ImageBubble(QWidget):
         )
 
         bw = self._bubble_w
-        bh = self._bubble_h
         bx = self._bubble_x()
         by = 4
         tw = self._tw
 
-        # Шестиугольная рамка
-        path = QPainterPath()
-        path.moveTo(bx + tw, by)
-        path.lineTo(bx, by + bh / 2)
-        path.lineTo(bx + tw, by + bh)
-        path.lineTo(bx + bw - tw, by + bh)
-        path.lineTo(bx + bw, by + bh / 2)
-        path.lineTo(bx + bw - tw, by)
-        path.closeSubpath()
+        path = self._bubble_path()
 
         fill_color = QColor(self.current_bg_color)
         painter.fillPath(path, fill_color)
@@ -778,15 +920,34 @@ class ImageBubble(QWidget):
                 )
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        inside_bubble = self._bubble_path().contains(QPointF(event.pos()))
+        if event.button() == Qt.MouseButton.RightButton:
+            if inside_bubble:
+                action = _exec_media_context_menu(
+                    self,
+                    event.pos(),
+                    self.color_primary,
+                )
+                if action is not None:
+                    self.context_action.emit(action)
+                    if action == "delete":
+                        self.delete_requested.emit(self.server_message_id)
+            return
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.has_image
+            and inside_bubble
+        ):
             top = self.window()
-            full_pixmap = QPixmap(self.path)
-            viewer = ImageViewer(self.color_primary, full_pixmap, top)
+            viewer = ImageViewer(self.color_primary, self._full_pixmap, top)
             viewer.setFocus()
         super().mousePressEvent(event)
 
 
 class VideoBubble(QWidget):
+    context_action = pyqtSignal(str)
+    delete_requested = pyqtSignal(object)
+
     def __init__(
         self,
         path: str,
@@ -798,9 +959,11 @@ class VideoBubble(QWidget):
         color_third: str,
         timestamp: datetime | None = None,
         status: str = "",
+        server_message_id: UUID | None = None,
         parent=None,
     ):
         super().__init__(parent)
+        self.server_message_id = server_message_id
         self.path = path
         self.is_mine = is_mine
         self.color_primary = color_primary
@@ -914,6 +1077,23 @@ class VideoBubble(QWidget):
         else:
             return self._margin
 
+    def _bubble_path(self) -> QPainterPath:
+        bx = self._bubble_x()
+        by = 4
+        bw = self._bubble_w
+        bh = self._bubble_h
+        tw = self._tw
+
+        path = QPainterPath()
+        path.moveTo(bx + tw, by)
+        path.lineTo(bx, by + bh / 2)
+        path.lineTo(bx + tw, by + bh)
+        path.lineTo(bx + bw - tw, by + bh)
+        path.lineTo(bx + bw, by + bh / 2)
+        path.lineTo(bx + bw - tw, by)
+        path.closeSubpath()
+        return path
+
     def _update_spinner_pos(self):
         if not self.is_mine:
             return
@@ -968,19 +1148,11 @@ class VideoBubble(QWidget):
         )
 
         bw = self._bubble_w
-        bh = self._bubble_h
         bx = self._bubble_x()
         by = 4
         tw = self._tw
 
-        path = QPainterPath()
-        path.moveTo(bx + tw, by)
-        path.lineTo(bx, by + bh / 2)
-        path.lineTo(bx + tw, by + bh)
-        path.lineTo(bx + bw - tw, by + bh)
-        path.lineTo(bx + bw, by + bh / 2)
-        path.lineTo(bx + bw - tw, by)
-        path.closeSubpath()
+        path = self._bubble_path()
 
         fill_color = QColor(self.current_bg_color)
         painter.fillPath(path, fill_color)
@@ -1037,7 +1209,20 @@ class VideoBubble(QWidget):
                 )
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        inside_bubble = self._bubble_path().contains(QPointF(event.pos()))
+        if event.button() == Qt.MouseButton.RightButton:
+            if inside_bubble:
+                action = _exec_media_context_menu(
+                    self,
+                    event.pos(),
+                    self.color_primary,
+                )
+                if action is not None:
+                    self.context_action.emit(action)
+                    if action == "delete":
+                        self.delete_requested.emit(self.server_message_id)
+            return
+        if event.button() == Qt.MouseButton.LeftButton and inside_bubble:
             viewer = VideoViewer(self.path, self.color_primary, self.window())
             viewer.setFocus()
         super().mousePressEvent(event)
@@ -1075,9 +1260,7 @@ class VideoViewer(QWidget):
         self._layout.addWidget(self.video_widget, 1)
 
         controls = QWidget()
-        controls.setStyleSheet(
-            f"background: {COLOR_VIDEO_CONTROLS_BACKGROUND};"
-        )
+        controls.setStyleSheet(f"background: {COLOR_VIDEO_CONTROLS_BACKGROUND};")
         controls_layout = QHBoxLayout(controls)
         controls_layout.setContentsMargins(12, 8, 12, 8)
         controls_layout.setSpacing(10)
@@ -1255,30 +1438,41 @@ class MessageList(QWidget):
         server_message_id: UUID | None,
         text: str,
         is_mine: bool,
+        local_message_id: UUID | None = None,
         timestamp: datetime | None = None,
         status: str = "",
         author: str | None = None,
+        reply_author: str | None = None,
+        reply_text: str | None = None,
     ) -> MessageBubble:
         timestamp = _as_utc(timestamp)
         self._divider(timestamp)
         bubble = MessageBubble(
-            server_message_id,
-            text,
-            is_mine,
-            self.color_primary,
-            self.color_outgoing,
-            self.color_inactive,
-            self.color_error,
-            self.color_third,
-            timestamp,
-            status,
-            author,
+            server_message_id=server_message_id,
+            local_message_id=local_message_id,
+            text=text,
+            is_mine=is_mine,
+            color_primary=self.color_primary,
+            color_outgoing=self.color_outgoing,
+            color_inactive=self.color_inactive,
+            color_error=self.color_error,
+            color_third=self.color_third,
+            timestamp=timestamp,
+            status=status,
+            author=author,
+            reply_author=reply_author,
+            reply_text=reply_text,
         )
         self._layout.addWidget(bubble)
         return bubble
 
     def add_video(
-        self, path: str, is_mine: bool, timestamp: datetime | None = None, status: str = ""
+        self,
+        path: str,
+        is_mine: bool,
+        timestamp: datetime | None = None,
+        status: str = "",
+        server_message_id: UUID | None = None,
     ) -> VideoBubble:
         timestamp = _as_utc(timestamp)
         self._divider(timestamp)
@@ -1292,11 +1486,19 @@ class MessageList(QWidget):
             self.color_third,
             timestamp,
             status,
+            server_message_id,
         )
         self._layout.addWidget(bubble)
         return bubble
 
-    def add_image(self, path: str, is_mine: bool, timestamp: datetime | None = None):
+    def add_image(
+        self,
+        path: str,
+        is_mine: bool,
+        timestamp: datetime | None = None,
+        status: str = "",
+        server_message_id: UUID | None = None,
+    ) -> ImageBubble:
         timestamp = _as_utc(timestamp)
         self._divider(timestamp)
         bubble = ImageBubble(
@@ -1308,6 +1510,34 @@ class MessageList(QWidget):
             self.color_error,
             self.color_third,
             timestamp,
+            status,
+            server_message_id,
+        )
+        self._layout.addWidget(bubble)
+        return bubble
+
+    def add_image_data(
+        self,
+        image_data: bytes,
+        is_mine: bool,
+        timestamp: datetime | None = None,
+        status: str = "",
+        server_message_id: UUID | None = None,
+    ) -> ImageBubble:
+        timestamp = _as_utc(timestamp)
+        self._divider(timestamp)
+        bubble = ImageBubble(
+            None,
+            is_mine,
+            self.color_primary,
+            self.color_outgoing,
+            self.color_inactive,
+            self.color_error,
+            self.color_third,
+            timestamp,
+            status,
+            server_message_id,
+            image_data=image_data,
         )
         self._layout.addWidget(bubble)
         return bubble

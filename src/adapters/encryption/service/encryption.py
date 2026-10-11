@@ -37,8 +37,8 @@ class EncryptionService:
             raise ValueError("File name must be a non-empty string")
         if "/" in value or "\\" in value:
             raise ValueError("File name must not contain a path")
-        if value in {".", ".."} or "." in value:
-            raise ValueError("File name must not contain an extension")
+        if value in {".", ".."}:
+            raise ValueError("File name must not be a reserved path component")
         return value
 
     @staticmethod

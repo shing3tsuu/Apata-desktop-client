@@ -167,6 +167,57 @@ class MessageService:
         return [message for message in decrypted if message is not None]
 
     @error_handler
+    async def get_file_messages(
+        self,
+        local_user_id: UUID,
+        message_ids: Sequence[UUID],
+    ) -> list[MessageDTO]:
+        if self._master_key is None:
+            raise ValueError("Master key is not set")
+
+        messages = await self._message_dao.get_file_messages(
+            local_user_id,
+            message_ids,
+        )
+        decrypted = await asyncio.gather(
+            *(self._decrypt_one(message) for message in messages)
+        )
+        return [message for message in decrypted if message is not None]
+
+    @error_handler
+    async def get_message_by_server_id(
+        self,
+        local_user_id: UUID,
+        server_message_id: UUID,
+    ) -> MessageDTO | None:
+        if self._master_key is None:
+            raise ValueError("Master key is not set")
+        message = await self._message_dao.get_message_by_server_id(
+            local_user_id,
+            server_message_id,
+        )
+        if message is None:
+            return None
+        return await self._decrypt_preview(message)
+
+    @error_handler
+    async def get_messages_by_ids(
+        self,
+        local_user_id: UUID,
+        message_ids: Sequence[UUID],
+    ) -> list[MessageDTO]:
+        if self._master_key is None:
+            raise ValueError("Master key is not set")
+        messages = await self._message_dao.get_messages_by_ids(
+            local_user_id,
+            message_ids,
+        )
+        decrypted = await asyncio.gather(
+            *(self._decrypt_preview(message) for message in messages)
+        )
+        return [message for message in decrypted if message is not None]
+
+    @error_handler
     async def delete_message(self, message_id: UUID) -> bool:
         return await self._message_dao.delete_message(message_id)
 

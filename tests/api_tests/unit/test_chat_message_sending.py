@@ -62,7 +62,7 @@ async def test_chat_message_service_builds_one_validated_fan_out_batch() -> None
         return [
             {
                 "id": str(item.message_id),
-                "logical_message_id": str(batch.logical_message_id),
+                "general_message_uuid": str(batch.general_message_uuid),
                 "recipient_id": str(item.recipient_id),
                 "timestamp": timestamp.isoformat(),
             }
@@ -95,7 +95,7 @@ async def test_chat_message_service_builds_one_validated_fan_out_batch() -> None
         first_delivery_id,
         second_delivery_id,
     }
-    assert len({item.logical_message_id for item in result}) == 1
+    assert len({item.general_message_uuid for item in result}) == 1
     assert len({item.timestamp for item in result}) == 1
     auth_dao.get_ecdh_public_keys_batch.assert_awaited_once()
     encryption_service.encrypt_message_to_chat.assert_awaited_once()

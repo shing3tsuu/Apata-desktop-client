@@ -299,3 +299,136 @@ Add focused tests for interactor prerequisites, accepted-status enforcement, dup
 - Final verification passes the complete messenger interactor and related UI suites (`41 passed`), Ruff, Python compilation, and the diff whitespace check.
 
 closed: true
+
+## Task 9 — Send Encrypted Files to Direct Contacts
+
+Add direct-contact file sending through a dedicated messenger interactor and connect it to the existing attachment UI only after the interactor has been implemented and verified. Group-chat file fan-out remains out of scope.
+
+Before implementing the client interactor, complete the existing server file transport semantics:
+
+1. when a direct file upload is completed, create the missing `BLANK` contact relationship between sender and recipient without changing an existing relationship or status;
+2. publish the existing `message_available` realtime invalidation to the recipient only after the completed upload and contact relationship have committed;
+3. do not introduce another realtime event type or send cryptographic material through WebSocket payloads;
+4. keep chat-file behavior unchanged and do not add group-chat file sending in this task.
+
+Create `SendContactFileMessageInteractor` in `src/presentation/interactors/messenger.py`. It must validate the selected direct contact, authentication state, local user, master key, ED/ECDH keys, source path, supported extension, and file metadata. It must send the file through the existing `FileHTTPService.send_encrypted_message_file`, then persist exactly one outgoing local file message through `MessageService.add_message_file`. Local persistence must continue encrypting file bytes with the master key automatically. After successful persistence, append only the file metadata to the matching `ContactCache.messages`; do not retain file bytes in `AppState`.
+
+The interactor must leave the local database and cache unchanged when validation or upload fails. It must return the persisted `MessageDTO` on success so the UI can bind the real server message ID and delivery state. The later UI phase must replace the current optimistic-only attachment bubble with the same pending/sent/failed flow used for text messages, and must keep attachment controls unavailable for group chats.
+
+Current transport limitations must be handled explicitly:
+
+- the client file service currently receives the complete plaintext as `bytes` before chunked network upload, so large files can consume roughly multiple times their size during local encryption and persistence and synchronous file reads can stall the UI;
+- do not silently advertise the server's 1 GiB ciphertext limit as a safe client limit on low-memory hardware;
+- enforce a 100 MiB plaintext client-side limit in both the file service and, before reading from disk, the interactor; files larger than this require a later streaming refactor of file reading, transport encryption, and local persistence;
+- reject unsupported extensions clearly instead of allowing an upload that cannot be represented by `MessageContentMimeTypeEnum` in the local database;
+- preserve file names deliberately; do not silently rename multi-dot names to satisfy the current validation contract.
+
+Add focused server tests for missing-contact creation, preservation of existing contact statuses, realtime publication after successful completion, and no publication on failed completion. Add focused client tests for prerequisites, metadata parsing, supported extensions, upload failure without local mutation, automatic encrypted local persistence, cache updates without file bytes, and successful direct-contact sending. Run the relevant server and client tests, Ruff, and mypy before closing the task.
+
+### Implementation progress
+
+- The server now creates missing direct-message `BLANK` relationships during file completion without replacing existing statuses, commits the transaction before publishing `message_available`, and does not publish when completion fails. The focused server unit suite passes (`76 passed`).
+- The client file transport rejects plaintext payloads above 100 MiB before encryption and exposes its existing MIME-to-content-type mapping for local persistence.
+- `SendContactFileMessageInteractor` validates the source file and application/key prerequisites, reads the file outside the event-loop thread, uploads it through `FileHTTPService`, creates a missing local `BLANK` contact only after the upload succeeds, persists the outgoing file through `MessageService`, and stores only file metadata in `ContactCache`.
+- Focused interactor and transport tests cover successful sending, new-contact mapping, upload failure without local mutation, application-state prerequisites, unsupported extensions, dotted base names, and the 100 MiB boundary. The messenger and file unit suites pass (`45 passed`), the existing message database suite passes (`15 passed` with asyncio auto mode), Ruff and Python compilation pass, and the diff whitespace check is clean.
+- The shared message send action now chooses exactly one operation: an attached file is sent to the selected direct contact through `SendContactFileMessageInteractor`, while a send without an attachment continues through the existing contact/chat text interactors. Attached files receive real pending, sent, and failed bubble states; attachment controls remain unavailable for chats. Text entered alongside an attachment is preserved for the next send instead of being silently discarded or sent as a second message.
+- The attachment dialog's advertised `.jpg` extension is represented by the local MIME enum. Focused UI and interactor coverage verifies exclusive routing, the real interactor connection, successful server-ID binding, failure state, supported extensions, and contact-only availability. The combined relevant suite passes (`57 passed`) and Ruff passes.
+- When a direct conversation is opened, image payloads for its cached messages are fetched from the local database in one query, decrypted with the master key, and rendered directly from memory as image bubbles. Decrypted bytes are kept only by the currently displayed panel, are not added to `AppState`, and are discarded when the conversation changes. Image viewer activation is restricted to the rendered angled bubble instead of the full row width. Image and video bubbles expose a shared UI-only context menu with `DELETE`, `FORWARD`, `REPLY`, and `SAVE TO DISK`; the actions emit placeholders for future business logic. Focused database, interactor, and UI coverage passes (`26 passed`), and Ruff passes.
+- Text and media message context menus share the contact menu's light palette: the application background color at rest, primary-colored text and border, and a primary hover surface with light text.
+- `SaveMessageFileToDiskInteractor` retrieves the selected file message from the local database through `MessageService`, decrypts its ciphertext with the current master key, restores the stored extension, validates the plaintext size, and writes the result atomically to either a selected directory or file path. The media `SAVE TO DISK` action now resolves the local message ID, opens the system save dialog with the original name and extension, and schedules the interactor without blocking the UI. Focused tests cover database-service delegation, dotted destination names, missing messages, corrupted-size rejection, panel routing, dialog cancellation, and successful interactor dispatch.
+- A working mypy environment and manual live-client verification are still pending, so this task remains open.
+
+closed: false
+
+## Task 10 — Implement Persistent Message Replies
+
+Implement message replies without introducing a separate sending interactor. Extend the existing direct-message and chat-message interactors with an optional reply reference, and connect the existing reply UI prototype to real persisted and synchronized message data.
+
+### Message identity
+
+Chat fan-out creates several physical server messages: every recipient receives a separately encrypted delivery with its own server message UUID. Add one `general_message_uuid` shared by every delivery that represents the same logical chat message. The sender's single local outgoing record and all recipient delivery records must carry this same value.
+
+The existing `logical_message_id` already represents this concept. Rename and migrate it to `general_message_uuid` throughout the client and server instead of adding a second column with duplicated meaning. Apply explicit database migrations; do not add runtime schema migration workarounds. Direct messages must store `NULL` in this column because their normal message primary key is already their complete identity.
+
+For chat messages, `general_message_uuid` must never be null. Enforce this with a database constraint equivalent to:
+
+`chat_id IS NULL OR general_message_uuid IS NOT NULL`
+
+Use an indexed, uniqueness-protected server lookup key that includes `(recipient_id, chat_id, general_message_uuid)`. This key identifies the exact physical delivery of one general chat message that belongs to one recipient.
+
+The physical message UUID remains the identity of one encrypted delivery and continues to be used for acknowledgement, decryption-failure reporting, and delivery-specific operations. It must not be used as the shared identity of a fan-out chat message.
+
+### Reply transport and resolution
+
+For a chat reply, create a dedicated `GetChatReplyTargetsInteractor` in the messenger interactors. It accepts the selected chat and the quoted message's `general_message_uuid`, calls one authorized server endpoint, and returns an in-memory `dict[UUID, UUID]` whose keys are recipient user UUIDs and whose values are the physical server message UUIDs of those recipients' encrypted copies of the quoted message. The HTTP response should use an explicit list DTO such as `{user_id, message_id}` and the client interactor should construct the dictionary; do not encode UUIDs as JSON object keys.
+
+The server endpoint must resolve this mapping with one bulk query scoped by both `chat_id` and `general_message_uuid`, and it must authorize the caller as an active participant of that chat. It must never expose deliveries from another chat merely because a UUID was supplied.
+
+Pass the resulting mapping into the existing `SendChatTextMessageInteractor`; do not create a separate reply-sending interactor. While building the normal encrypted fan-out deliveries, look up every current `delivery.recipient_id` in the mapping and write the resulting physical quoted-message UUID to that delivery's `reply_to_id`. Every recipient therefore receives a hard reference to their own encrypted copy of the quoted message; never attach another recipient's physical message ID or use the general UUID itself as `reply_to_id`.
+
+Also send `reply_to_general_message_uuid: UUID | None` once as shared batch metadata so the server can validate the client-provided mapping efficiently. For every non-null per-delivery `reply_to_id`, the server must verify in one bulk validation query that the target belongs to the same chat, has the supplied `general_message_uuid`, and belongs to the same recipient as the new delivery. The server must not trust the client-provided dictionary without this validation.
+
+The current participant set may differ from the participant set that received the quoted message. Ignore mapping entries for users who are no longer recipients. If a newly added participant has no historical delivery in the mapping, send their new delivery with `reply_to_id = NULL` while retaining the shared reply identity; this must not fail the whole batch. If membership changes cause the existing chat-send retry path to rebuild the batch, resolve the reply-target mapping again before retrying so it cannot become stale.
+
+The author of a quoted chat message also has no recipient delivery because fan-out excludes the sender. When another participant replies to that message, send the delivery addressed to the original author with `reply_to_id = NULL` and preserve `reply_to_general_message_uuid`. The author's client must resolve `(chat_id, reply_to_general_message_uuid)` to its existing local outgoing message and store that message's local primary key in `reply_to_id`. This is the only logical-identity fallback for an existing historical message; recipients that have physical deliveries must still receive their recipient-specific `reply_to_id`. Do not create a sender self-delivery or a new mapping table.
+
+The server response and later synchronization expose the recipient-specific physical `reply_to_id`. The receiving client resolves that server UUID through the quoted message's `server_message_id` and stores the resulting local message primary key as its local `reply_to_id` relationship. Persist the unresolved server reply UUID separately when necessary so synchronization order or an older message outside the current cache cannot destroy the relationship. Reattempt local resolution when the missing quoted delivery is later stored.
+
+For direct conversations, retain the existing server `reply_to_id` contract based on the quoted direct message's physical server UUID. Use clear, correctly spelled field names such as `reply_to_id` and `reply_to_general_message_uuid`; do not introduce `replyed_*` fields.
+
+### Sending and synchronization
+
+Do not create reply-specific sending interactors. Modify the existing text-message interactors so their normal send operation accepts an optional reply target:
+
+- the direct-message interactor sends the quoted message's server UUID through the existing direct reply field;
+- before a chat reply is sent, `GetChatReplyTargetsInteractor` resolves `user_id -> message_id` by the quoted message's `general_message_uuid`;
+- the chat-message interactor accepts that mapping, assigns the correct physical `reply_to_id` to each recipient's delivery, and sends the quoted `general_message_uuid` once in the shared fan-out batch metadata for validation and fallback rendering.
+
+The selected reply state must retain the target message identity in addition to the rendered author and preview text. Clear that state only after a successful send or an explicit cancellation; preserve it when sending fails so the user can retry.
+
+Extend API DTOs, database DTOs, local services, synchronization, and conversation caches so incoming and outgoing replies preserve their durable reference. Resolve the quoted message from the current conversation cache first and fall back to the scoped local SQL query. The cache is an optimization only and must not be assumed to contain an older quoted message.
+
+The server must validate that a referenced message belongs to the same direct conversation or chat and that the authenticated sender is allowed to access it. It must reject cross-conversation and cross-chat reply references. A participant added after the quoted chat message may not possess a corresponding historical delivery; this must not invalidate the new fan-out message. That recipient displays the unavailable fallback unless the original message later becomes available locally.
+
+If the quoted message is deleted, unavailable, or has not yet synchronized, render a stable `MESSAGE IS UNAVAILABLE` reply block rather than dropping the reply relation or failing to render the containing message. An encrypted reply snapshot and quote preservation after permanent deletion are outside this task.
+
+### Verification
+
+Add focused client and server coverage for:
+
+- one `general_message_uuid` shared by all physical deliveries in a chat batch;
+- database constraints and unique scoped indexes;
+- direct replies through the existing physical server message reference;
+- chat reply batch lookup through `reply_to_general_message_uuid`;
+- the authorized reply-target endpoint and `GetChatReplyTargetsInteractor`, including construction of the `user_id -> message_id` dictionary;
+- server-side bulk resolution from the general UUID and recipient UUID to each recipient's concrete quoted-message primary key;
+- passing that dictionary into `SendChatTextMessageInteractor` and assigning it by each delivery's `recipient_id`;
+- recipient-specific physical `reply_to_id` values across the resulting fan-out deliveries;
+- server rejection of a client-provided physical target that belongs to another chat, general message, or recipient;
+- successful fan-out when a newly added participant has no physical copy of the older quoted message;
+- client-side resolution from the received physical server reply UUID to the matching local message row;
+- cache hits and local-database fallback for replies older than the cache window;
+- deferred resolution when the quoted message arrives after the reply;
+- unavailable and deleted quoted-message rendering;
+- rejection of cross-chat and cross-conversation references;
+- preserving reply selection after send failure and clearing it after success;
+- rendering the real quoted author and content for direct and chat messages after synchronization and application restart.
+
+Run the relevant client and server tests, Ruff, and mypy. Keep this task open until message replies work through the real API for both direct conversations and fan-out chats.
+
+### Implementation progress
+
+- The existing `logical_message_id` field was renamed to `general_message_uuid` across the client, server, API contract, persistence DTOs, caches, and tests. No duplicate identity column was introduced.
+- Direct messages now store `NULL` for `general_message_uuid` and continue using their ordinary physical message primary key. Chat fan-out deliveries require one shared non-null `general_message_uuid`.
+- Explicit SQLite and Alembic migrations preserve existing chat identities, clear the obsolete value from direct messages, rename indexes and constraints, and were applied to the local client and server databases.
+- The client now has `GetChatReplyTargetsInteractor` and its typed HTTP DAO/service contract. It validates the selected chat cache and authenticated session, requests one recipient-target list by `chat_id` and `general_message_uuid`, rejects duplicate user or physical message IDs, and returns `dict[user_id, message_id]`. The server endpoint authorizes active chat membership and scopes its bulk lookup by both identities.
+- The focused chat API and messenger interactor suites pass (`47 passed`), and the changed files pass Ruff import and critical-error checks. The available fallback mypy environment reports existing project-wide typing errors but no diagnostic in the new reply-target code.
+- Direct-contact replies now use the existing send interactor and `/send` contract. The client resolves the selected target from its local conversation cache, verifies the physical server message against SQLite, persists both the unresolved server reference and resolved local relationship, and keeps the UI reply selection until successful delivery. Incoming synchronization preserves the physical `reply_to_id`, supports deferred resolution when the quoted message arrives later, and reloads quoted content outside the ten-message cache window after an application restart.
+- The direct-message server rejects missing, chat-scoped, and cross-conversation targets before persistence. The explicit client SQLite migration was applied, focused client reply coverage passes, and the server passes Ruff, mypy, and its full unit suite.
+- Direct outgoing messages now persist the canonical server timestamp returned by `/send`. The frozen SQLAlchemy datetime defaults were replaced with callables, and existing local direct-message copies were repaired from their matching incoming server timestamps so replies and source messages retain their real order.
+- Chat replies now use `reply_to_general_message_uuid` as the durable logical target and recipient-specific `reply_to_id` values wherever a physical historical delivery exists. The authorized reply-target endpoint resolves the complete mapping in one scoped bulk query, and the server validates the mapping before persisting the fan-out batch.
+- The existing chat sending interactor and messenger UI now carry reply state through lookup, encryption, persistence, synchronization, cache reconstruction, failure retry, and successful clearing. The original author resolves a reply through the shared general UUID to the local outgoing row, while normal recipients resolve their own physical delivery; no sender self-delivery or mapping table was added.
+- Explicit client and server migrations add `reply_to_general_message_uuid`. They were applied to the local SQLite and PostgreSQL databases; the SQLite backup is stored as `apata.db.before_task10_chat_reply`, its integrity check passes, and PostgreSQL is at Alembic head `20261010_02`.
+- Client Ruff passes, 82 focused unit/UI/database tests pass, and the live three-user integration scenario passes through the running API for both the original-author fallback and recipient-specific physical targets. The server passes Ruff, mypy, and all 85 tests. The copied client environment still cannot provide a meaningful full mypy run: the available isolated runner lacks the project's installed third-party packages and reports the previously known project-wide typing errors rather than reply-specific diagnostics.
+
+closed: true

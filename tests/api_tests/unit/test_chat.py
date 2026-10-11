@@ -15,6 +15,7 @@ from src.adapters.api.dto import (
     ChatEventDTO,
     ChatParticipantChangeDTO,
     ChatParticipantDTO,
+    ChatReplyTargetDTO,
     MessageProcessingResultDTO,
 )
 from src.adapters.api.service import (
@@ -255,6 +256,28 @@ async def test_chat_http_dao_lists_chats_participants_and_incremental_events() -
 
 
 @pytest.mark.asyncio
+async def test_chat_http_dao_gets_reply_targets() -> None:
+    chat_id = uuid4()
+    general_message_uuid = uuid4()
+    response = [{"user_id": str(uuid4()), "message_id": str(uuid4())}]
+    http_client = MagicMock(spec=CommonHTTPClient)
+    http_client.get = AsyncMock(return_value=response)
+    dao = ChatHTTPDAO(http_client=http_client)
+
+    result = await dao.get_reply_targets(
+        chat_id,
+        general_message_uuid,
+        token="access-token",
+    )
+
+    assert result is response
+    http_client.set_auth_token.assert_called_once_with("access-token")
+    http_client.get.assert_awaited_once_with(
+        f"/chats/{chat_id}/messages/{general_message_uuid}/reply-targets"
+    )
+
+
+@pytest.mark.asyncio
 async def test_chat_http_service_returns_dtos_and_delete_result() -> None:
     chat_id = uuid4()
     owner_id = uuid4()
@@ -348,6 +371,34 @@ async def test_chat_http_service_returns_dtos_and_delete_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_http_service_returns_reply_target_dtos() -> None:
+    chat_id = uuid4()
+    general_message_uuid = uuid4()
+    user_id = uuid4()
+    message_id = uuid4()
+    chat_dao = MagicMock(spec=ChatHTTPDAO)
+    chat_dao.get_reply_targets = AsyncMock(
+        return_value=[
+            {
+                "user_id": str(user_id),
+                "message_id": str(message_id),
+            }
+        ]
+    )
+    service = ChatHTTPService(chat_dao=chat_dao)
+    service.token = "access-token"
+
+    result = await service.get_reply_targets(chat_id, general_message_uuid)
+
+    assert result == [ChatReplyTargetDTO(user_id=user_id, message_id=message_id)]
+    chat_dao.get_reply_targets.assert_awaited_once_with(
+        chat_id=chat_id,
+        general_message_uuid=general_message_uuid,
+        token="access-token",
+    )
+
+
+@pytest.mark.asyncio
 async def test_chat_http_service_requires_authentication() -> None:
     chat_dao = MagicMock(spec=ChatHTTPDAO)
     service = ChatHTTPService(chat_dao=chat_dao)
@@ -364,6 +415,8 @@ async def test_chat_http_service_requires_authentication() -> None:
     with pytest.raises(AuthenticationError):
         await service.remove_participant(uuid4(), uuid4())
 
+    with pytest.raises(AuthenticationError):
+        await service.get_reply_targets(uuid4(), uuid4())
 
 @pytest.mark.asyncio
 async def test_chat_http_service_clears_rejected_token() -> None:

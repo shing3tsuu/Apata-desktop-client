@@ -26,7 +26,12 @@ class MessageCache:
     is_outgoing: bool
     is_delivered: bool
     failed: bool | None = None
-    logical_message_id: UUID | None = None
+    general_message_uuid: UUID | None = None
+    server_reply_to_id: UUID | None = None
+    reply_to_general_message_uuid: UUID | None = None
+    reply_to_id: UUID | None = None
+    reply_author: str | None = None
+    reply_text: str | None = None
 
 
 @dataclass(slots=True)

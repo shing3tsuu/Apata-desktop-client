@@ -8,6 +8,7 @@ import pytest
 from src.adapters.api.dao.common import CommonHTTPClient
 from src.adapters.api.dto import FileUploadSessionDTO
 from src.adapters.api.service.file import FileHTTPService
+from src.adapters.encryption.service import EncryptionService
 from src.adapters.encryption.service.dto import FileEncryptionContext
 from src.exceptions import APIError, NetworkError
 from tests.timing_wrapper import timer
@@ -92,6 +93,46 @@ def test_retry_after_is_capped_without_jitter() -> None:
     )
 
     assert client._retry_delay(error, attempt=1) == 2
+
+
+def test_file_content_rejects_payload_above_client_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(FileHTTPService, "MAX_PLAINTEXT_FILE_SIZE", 3)
+
+    with pytest.raises(ValueError, match="100 MiB client limit"):
+        FileHTTPService._prepare_file_content(
+            file_name="document",
+            file_mime_type=".pdf",
+            file_content=b"1234",
+        )
+
+
+def test_file_content_accepts_payload_at_client_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(FileHTTPService, "MAX_PLAINTEXT_FILE_SIZE", 3)
+
+    size = FileHTTPService._prepare_file_content(
+        file_name="document",
+        file_mime_type=".pdf",
+        file_content=b"123",
+    )
+
+    assert size == 3
+
+
+def test_file_content_accepts_dots_in_base_name() -> None:
+    size = FileHTTPService._prepare_file_content(
+        file_name="photo.09.10.2026",
+        file_mime_type=".png",
+        file_content=b"image",
+    )
+
+    assert size == 5
+    assert EncryptionService._validate_file_name("photo.09.10.2026") == (
+        "photo.09.10.2026"
+    )
 
 
 class _FakeEncryptionService:

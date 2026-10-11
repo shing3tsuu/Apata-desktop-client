@@ -15,6 +15,7 @@ from src.presentation.interactors.login import (
     GetPrivateKeysInteractor,
     HashingPasswordInteractor,
     LoginUserInteractor,
+    RecoverECDHKeyInteractor,
     RegisterUserOnServerInteractor,
     RotateKeysInteractor,
     SynchronizeChatsInteractor,
@@ -90,6 +91,7 @@ class LoginInterface(QWidget):
         self.check_local_user_login_interactor = CheckLocalUserLoginInteractor()
         self.compare_password_interactor = ComparePasswordInteractor()
         self.get_private_keys_interactor = GetPrivateKeysInteractor()
+        self.recover_ecdh_key_interactor = RecoverECDHKeyInteractor()
         self.synchronize_contacts_interactor = SynchronizeContactsInteractor()
         self.synchronize_chats_interactor = SynchronizeChatsInteractor()
         self.sync_message_history_interactor = SyncMessageHistoryInteractor()
@@ -294,6 +296,7 @@ class LoginInterface(QWidget):
     @asyncSlot()
     async def _on_access_clicked(self, checked: bool = False):
         self.logs_container.clear()
+        ecdh_recovered_during_login = False
 
         if self.mode == "register":
             self.logs_container.add_log("CHECK REGISTRATION POSSIBILITY")
@@ -374,7 +377,11 @@ class LoginInterface(QWidget):
                 return
 
             self.logs_container.add_log("OBTAINING CRYPTOGRAPHIC KEYS")
-            success, message = await self.get_private_keys_interactor(
+            (
+                success,
+                message,
+                ecdh_recovery_required,
+            ) = await self.get_private_keys_interactor(
                 container=self.main_window.container
             )
             self.logs_container.finish_log(success, message)
@@ -390,6 +397,16 @@ class LoginInterface(QWidget):
 
             if not success:
                 return
+
+            if ecdh_recovery_required:
+                self.logs_container.add_log("RECOVERING ECDH KEY")
+                success, message = await self.recover_ecdh_key_interactor(
+                    container=self.main_window.container
+                )
+                self.logs_container.finish_log(success, message)
+                if not success:
+                    return
+                ecdh_recovered_during_login = True
 
             self.logs_container.add_log(text="SYNCHRONIZATION CONTACTS", is_dict=True)
             (
@@ -465,14 +482,15 @@ class LoginInterface(QWidget):
                 indent=4,
             )
 
-            self.logs_container.add_log("ROTATING CRYPTOGRAPHY KEYS")
-            success, message = await self.rotate_keys_interactor(
-                container=self.main_window.container
-            )
-            self.logs_container.finish_log(success, message)
+            if not ecdh_recovered_during_login:
+                self.logs_container.add_log("ROTATING CRYPTOGRAPHY KEYS")
+                success, message = await self.rotate_keys_interactor(
+                    container=self.main_window.container
+                )
+                self.logs_container.finish_log(success, message)
 
-            if not success:
-                return
+                if not success:
+                    return
 
         self.logs_container.add_log("CACHING CONVERSATIONS", is_dict=True)
         success, message, cache_counts = await self.cache_conversations_interactor(
