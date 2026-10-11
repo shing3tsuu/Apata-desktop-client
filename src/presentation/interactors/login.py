@@ -1297,6 +1297,12 @@ class RealtimeInteractor:
         if websocket_service is not None:
             await websocket_service.stop_websocket_listener()
 
+    async def set_presence(self, online: bool) -> bool:
+        websocket_service = self._websocket_service
+        if websocket_service is None:
+            return False
+        return await websocket_service.set_presence(online)
+
     async def _handle_connection_state(self, connected: bool) -> None:
         async with self._container() as request_container:
             app_state = await request_container.get(AppState)
