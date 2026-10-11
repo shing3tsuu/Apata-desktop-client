@@ -4,12 +4,15 @@ import sys
 
 import qasync
 from dishka import Scope, make_async_container
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
 from src.presentation.interactors.login import RealtimeInteractor
 from src.presentation.pages.login import LoginInterface
 from src.presentation.pages.messenger import MessengerInterface
+from src.presentation.pages.tray import TrayController, create_apata_icon
 from src.providers import StateProvider, AppProvider
+from src.providers.state import AppState
 
 
 class MainWindow(QMainWindow):
@@ -19,6 +22,7 @@ class MainWindow(QMainWindow):
         self.current_screen = None
         self.screens = {}
         self.realtime_interactor = None
+        self.tray_controller = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -61,6 +65,21 @@ class MainWindow(QMainWindow):
             self.screens["messenger"].refresh_from_state
         )
 
+        async with self.container() as request_container:
+            app_state = await request_container.get(AppState)
+        self.tray_controller = TrayController(
+            window=self,
+            app_state=app_state,
+            realtime_interactor=self.realtime_interactor,
+            logger=logger,
+        )
+        self.realtime_interactor.add_listener(
+            self.tray_controller.refresh_from_state
+        )
+        application = QApplication.instance()
+        if isinstance(application, QApplication) and self.tray_controller.available:
+            application.setQuitOnLastWindowClosed(False)
+
         for name, screen in self.screens.items():
             self.screen_stack.addWidget(screen)
 
@@ -82,9 +101,24 @@ class MainWindow(QMainWindow):
         if self.container:
             await self.container.close()
 
+    def closeEvent(self, event: QCloseEvent) -> None:
+        tray_controller = self.tray_controller
+        if tray_controller is not None and tray_controller.hide_window():
+            event.ignore()
+            return
+
+        application = QApplication.instance()
+        if isinstance(application, QApplication):
+            application.setQuitOnLastWindowClosed(True)
+        super().closeEvent(event)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setApplicationName("APATA")
+    app.setApplicationDisplayName("APATA")
+    app.setOrganizationName("APATA")
+    app.setWindowIcon(create_apata_icon())
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 

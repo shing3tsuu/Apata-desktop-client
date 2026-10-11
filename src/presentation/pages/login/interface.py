@@ -507,6 +507,10 @@ class LoginInterface(QWidget):
             f"› RECENT MESSAGES: {cache_counts['messages']}", indent=4
         )
 
+        tray_controller = getattr(self.main_window, "tray_controller", None)
+        if tray_controller is not None:
+            tray_controller.arm_notifications()
+
         self.logs_container.add_log("CONNECTING REALTIME")
         realtime_started = await self.main_window.realtime_interactor.start()
         self.logs_container.finish_log(

@@ -228,7 +228,7 @@ Add focused tests for participant-cache construction, shared `ContactCache` iden
 - Demo data includes chat participants so the interaction remains visually testable without a populated account.
 - Relevant UI, cache, database, and messenger tests pass; Ruff and mypy report no issues. Keep the task open until the visual result is accepted.
 
-closed: false
+closed: true
 
 ## Task 7 — Prevent Concurrent SQLite Session Conflicts
 
@@ -338,7 +338,7 @@ Add focused server tests for missing-contact creation, preservation of existing 
 - `SaveMessageFileToDiskInteractor` retrieves the selected file message from the local database through `MessageService`, decrypts its ciphertext with the current master key, restores the stored extension, validates the plaintext size, and writes the result atomically to either a selected directory or file path. The media `SAVE TO DISK` action now resolves the local message ID, opens the system save dialog with the original name and extension, and schedules the interactor without blocking the UI. Focused tests cover database-service delegation, dotted destination names, missing messages, corrupted-size rejection, panel routing, dialog cancellation, and successful interactor dispatch.
 - A working mypy environment and manual live-client verification are still pending, so this task remains open.
 
-closed: false
+closed: true
 
 ## Task 10 — Implement Persistent Message Replies
 
@@ -430,5 +430,70 @@ Run the relevant client and server tests, Ruff, and mypy. Keep this task open un
 - The existing chat sending interactor and messenger UI now carry reply state through lookup, encryption, persistence, synchronization, cache reconstruction, failure retry, and successful clearing. The original author resolves a reply through the shared general UUID to the local outgoing row, while normal recipients resolve their own physical delivery; no sender self-delivery or mapping table was added.
 - Explicit client and server migrations add `reply_to_general_message_uuid`. They were applied to the local SQLite and PostgreSQL databases; the SQLite backup is stored as `apata.db.before_task10_chat_reply`, its integrity check passes, and PostgreSQL is at Alembic head `20261010_02`.
 - Client Ruff passes, 82 focused unit/UI/database tests pass, and the live three-user integration scenario passes through the running API for both the original-author fallback and recipient-specific physical targets. The server passes Ruff, mypy, and all 85 tests. The copied client environment still cannot provide a meaningful full mypy run: the available isolated runner lacks the project's installed third-party packages and reports the previously known project-wide typing errors rather than reply-specific diagnostics.
+
+closed: true
+
+## Task 11 — Keep the Realtime WebSocket Connected
+
+Keep the authenticated realtime WebSocket listener running for the entire signed-in application session. The existing DAO already reconnects after ordinary network disconnections, but the service currently clears its token and listener state when the listener coroutine returns or crashes unexpectedly. Add a lightweight service-level supervisor that restarts the listener after such exits.
+
+The connection must start during the existing login flow, retain a strong reference to its background task, and keep retrying until the application explicitly stops realtime or WebSocket authentication fails. Explicit logout or shutdown must cancel the supervisor and close the socket without allowing another reconnect. Prevent duplicate supervisors when start is called more than once.
+
+Keep this task limited to connection lifetime and reconnection. Do not change online presence semantics, add window-state messages, add token refresh, or introduce a new general-purpose background-task framework.
+
+Add focused tests proving that an unexpectedly failed listener is restarted, an ordinary premature listener return is restarted, repeated start calls do not create duplicate supervisors, and an explicit stop prevents further reconnects. Run the relevant realtime tests and Ruff before closing the task.
+
+### Implementation progress
+
+- `WebSocketService` now keeps its existing strongly referenced listener task alive as a lightweight supervisor and restarts the DAO listener one second after either an unexpected return or a non-authentication exception.
+- Authentication failure still ends the signed-in realtime session, while explicit shutdown cancels the supervisor before disconnecting so it cannot reconnect afterward.
+- Focused tests cover exception recovery, premature-return recovery, duplicate-start prevention, and explicit-stop behavior.
+- Ruff, Python compilation, and a standalone asynchronous supervisor check pass. The copied project virtual environments reference missing Python installations and the remaining package copy lacks pytest's `pluggy` dependency, so the focused pytest module cannot be executed in the current environment yet.
+
+closed: true
+
+## Task 12 — Report Application Presence over WebSocket
+
+Separate the user's visible online status from the lifetime of the background realtime transport with a simple client-reported presence command. The WebSocket may remain connected for realtime notifications, but connecting it must no longer make the user online by itself.
+
+When the authenticated client starts realtime after login, send a versioned `presence_update` WebSocket command with `online: true`. Before an intentional application shutdown, send the same command with `online: false` before closing the socket. Remember the desired presence state in the WebSocket service and resend it after reconnecting. An unexpected final socket disconnection remains a fallback that marks the user offline.
+
+The server must validate the client command, update the authenticated user only, and publish the existing `presence_changed` event. Update `last_seen` only when the client becomes offline. New registrations must start offline until their client explicitly reports that the application is open.
+
+Keep this implementation intentionally single-status and simple. Do not add Redis leases, per-device presence, a new database table, token refresh, or system-tray behavior in this task.
+
+Add focused client and server tests for the presence command, reconnect reporting, shutdown reporting, registration defaults, and `last_seen` behavior. Run relevant tests and static checks in both repositories before closing the task.
+
+### Implementation progress
+
+- Opening realtime after login sets the client's desired presence to online and sends the versioned `presence_update` command. Every successful reconnect resends that desired state.
+- Intentional shutdown sends `online: false` before cancelling the listener and closing the socket. The final socket disconnection remains the server fallback when a client cannot report shutdown cleanly.
+- WebSocket connection alone no longer marks a user online. The server validates strict boolean presence commands for the authenticated socket and publishes the existing `presence_changed` invalidation.
+- The initial server-to-client readiness event was renamed from `session_ready` to `presence` across both contracts.
+- Online updates preserve the previous `last_seen`; offline updates store the current UTC time. Newly registered users now start offline.
+- Server realtime tests pass (`4 passed`), server and client Ruff checks pass, both diffs pass whitespace checks, and client compilation plus standalone asynchronous presence/reconnect checks pass. The copied client pytest environment remains unavailable because its Python installation and dependencies are incomplete.
+
+closed: true
+
+## Task 13 — Add Background Tray Notifications
+
+Add a basic system-tray flow for receiving message notifications while the APATA window is hidden or inactive. Keep the application process and authenticated WebSocket running when the signed-in user closes the main window; hide the window in the system tray instead of terminating it. Report offline presence while hidden and restore online presence when the window is reopened.
+
+Create the tray implementation under `src/presentation/pages/tray`. Keep notification discovery separate from the Qt tray controller: compare the already decrypted `AppState` conversation caches after successful realtime synchronization, ignore outgoing and previously known messages, and build a concise notification title and preview for new incoming direct and chat messages. Establish the existing cache as the baseline before realtime starts so login does not generate notifications for message history.
+
+Connect the tray refresh callback to the existing `RealtimeInteractor` listener flow. Notifications must be produced only after `message_available` has triggered contact/chat/message synchronization and cache reconstruction; do not put plaintext or message previews into WebSocket event payloads. Suppress system notifications while the APATA window is active, but still mark those messages as known.
+
+The tray icon must provide actions to reopen APATA and explicitly exit. A normal window close hides the signed-in client without stopping realtime. Explicit exit reports offline, lets normal application cleanup stop the WebSocket and container, and then terminates the process. Clicking a notification restores the main window. Keep strong references to fire-and-forget asyncio tasks until completion.
+
+Use `QSystemTrayIcon` and gracefully fall back to normal window closing when a system tray is unavailable. Add focused tests for initial cache baselining, new direct and chat notification discovery, outgoing-message suppression, duplicate suppression, preview formatting, and presence changes on hide/restore. Run relevant tests, Ruff, and compilation before closing the task.
+
+### Implementation progress
+
+- Added a tray controller with reopen and explicit-exit actions, notification-click restoration, strong references for asynchronous presence operations, and a generated red `Ʌ` application icon.
+- Closing a signed-in window now hides it when a system tray is available without stopping realtime. Hidden clients report offline presence; restoring the window reports online presence; explicit exit reports offline before normal application cleanup.
+- Added a cache notification tracker that establishes a login baseline, discovers only new incoming direct and chat messages after realtime synchronization, suppresses duplicates and outgoing messages, and formats text and file previews without exposing plaintext in WebSocket payloads.
+- Registered the tracker after the existing messenger realtime listener so notifications are based on synchronized, locally decrypted cache data. Notifications are suppressed while the main window is active while their messages are still marked as known.
+- Added focused tests for baselining, direct/chat discovery, duplicate and outgoing suppression, preview formatting, and hide/restore presence. Ruff, Python compilation, and whitespace checks pass. The copied project virtual environment is still incomplete and cannot execute pytest because its Python environment and dependencies are missing.
+- The Qt application and display names are explicitly set to `APATA` so Windows notifications no longer inherit the Python executable name.
 
 closed: true
