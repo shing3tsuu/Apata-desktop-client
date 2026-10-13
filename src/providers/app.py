@@ -195,7 +195,7 @@ class AppProvider(Provider):
         await client.__aenter__()
         return client
 
-    @provide(scope=Scope.REQUEST)
+    @provide(scope=Scope.APP)
     async def auth_http_dao(self, http_client: CommonHTTPClient) -> AuthHTTPDAO:
         return AuthHTTPDAO(http_client=http_client)
 
@@ -221,11 +221,23 @@ class AppProvider(Provider):
             base_ws_url=self.base_ws_url, logger=self.logger, verify=self.verify_ssl
         )
 
-    @provide(scope=Scope.REQUEST)
+    @provide(scope=Scope.APP)
     async def auth_http_service(
-        self, auth_dao: AuthHTTPDAO, encryption_service: EncryptionService
+        self,
+        auth_dao: AuthHTTPDAO,
+        encryption_service: EncryptionService,
+        app_state: AppState,
+        http_client: CommonHTTPClient,
     ) -> AuthHTTPService:
-        return AuthHTTPService(auth_dao=auth_dao, encryption_service=encryption_service)
+        service = AuthHTTPService(
+            auth_dao=auth_dao,
+            encryption_service=encryption_service,
+            app_state=app_state,
+            http_client=http_client,
+            logger=self.logger,
+        )
+        http_client.set_access_token_rotation_handler(service.rotate_access_token)
+        return service
 
     @provide(scope=Scope.REQUEST)
     async def contact_http_service(
@@ -281,9 +293,11 @@ class AppProvider(Provider):
     async def websocket_service(
         self,
         websocket_dao: WebSocketDAO,
+        auth_http_service: AuthHTTPService,
     ) -> WebSocketService:
         return WebSocketService(
             websocket_dao=websocket_dao,
+            access_token_rotation_handler=auth_http_service.rotate_access_token,
             logger=self.logger,
         )
 

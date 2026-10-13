@@ -497,3 +497,30 @@ Use `QSystemTrayIcon` and gracefully fall back to normal window closing when a s
 - The Qt application and display names are explicitly set to `APATA` so Windows notifications no longer inherit the Python executable name.
 
 closed: true
+
+## Task 14 — Renew Access Tokens with ED25519 Proof
+
+Add automatic access-token rotation without adding or changing server HTTP routes, request DTOs, or response DTOs. Do not use the existing `/refresh` route and do not introduce a conventional refresh token. Reuse the exact authentication flow already used by normal login: `POST /auth/challenges` with the stored username, sign the returned challenge with the locally held ED25519 private key, then call `POST /auth/login` with that signature to receive a new access token.
+
+Complete the client auth service so every authenticated HTTP operation shares one renewal mechanism. When the API returns the existing expired-access `401`, start one single-flight invocation of the existing challenge/login flow, update `AppState`, `AuthHTTPService`, and the shared HTTP authorization source with the returned access token, and retry the original request exactly once. Concurrent failures must wait for the same rotation instead of requesting multiple challenges. The `/auth/challenges` and `/auth/login` calls must bypass automatic rotation so they cannot recurse. Do not rotate for invalid signatures, revoked tokens, unrelated authentication failures, authorization failures, or a request that already retried. A failed rotation must stop authenticated background work, clear the unusable session safely, and return the user to login without an infinite request loop.
+
+Integrate the same rotation with realtime without adding a token-renewal HTTP endpoint. When a WebSocket handshake fails because its access token expired, or when the server closes an established authenticated socket because the access lifetime ended, the WebSocket DAO/service must invoke the same shared single-flight challenge/login operation, replace its listener token, reconnect, and restore the previously desired presence state. HTTP and WebSocket expiration occurring together must still perform only one ED25519 login. Ordinary network reconnects must continue using the current valid access token and must not request a new challenge.
+
+Do not blacklist an already expired access token: its `exp` already makes it invalid. Preserve the server's existing access-token revocation and logout behavior for tokens that are still valid. Server changes in this task are limited to the internal WebSocket lifetime and expiration signaling needed for automatic client reconnection; do not add, rename, remove, or repurpose HTTP routes.
+
+The ED25519 private key must never leave the client or be logged. Preserve the existing typed challenge/login contracts and the project layering between HTTP DAO, service, interactors, and application state. Prefer the existing structured expired-token response or typed exception over matching arbitrary human-readable error text.
+
+Add client and server unit tests plus a live integration scenario covering:
+
+- initial ED25519 challenge/login returning the access token;
+- successful rotation through the existing `/auth/challenges` and `/auth/login` routes without calling `/refresh`;
+- wrong keys, invalid signatures, missing local keys, and expired or replayed challenges;
+- one HTTP request retry after expiration and no retry for unrelated `401` or `403` responses;
+- concurrent HTTP expiration producing exactly one renewal;
+- WebSocket expiration, shared renewal, reconnection, and presence restoration;
+- simultaneous HTTP and WebSocket expiration producing exactly one renewal;
+- renewal failure terminating the authenticated session without a reconnect or retry loop.
+
+Run the relevant client and server test suites, Ruff, and mypy. Keep this task open until both HTTP and realtime continue operating across real access-token expiration without manual login and without any new auth HTTP route.
+
+closed: true

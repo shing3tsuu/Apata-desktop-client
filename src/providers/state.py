@@ -151,6 +151,7 @@ class AppState:
         self._local_user_id = None
         self._server_user_id = None
         self._password = None
+        self._hashed_password = None
         self._master_key = None
         self._ed_public_key = None
         self._ed_private_key = None

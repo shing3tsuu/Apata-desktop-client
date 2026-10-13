@@ -1,14 +1,15 @@
 import asyncio
 import logging
 import random
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 import httpx
 
 from src.exceptions import (
+    AccessTokenExpiredError,
     APIError,
     AuthenticationError,
     InfrastructureError,
@@ -16,7 +17,12 @@ from src.exceptions import (
 )
 
 JSONResponse = dict[str, Any] | list[Any]
+AccessTokenRotationHandler = Callable[[str | None], Awaitable[str]]
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+AUTH_ROTATION_EXCLUDED_ENDPOINTS = {
+    "/auth/challenges",
+    "/auth/login",
+}
 
 
 class CommonHTTPClient:
@@ -77,6 +83,8 @@ class CommonHTTPClient:
 
         self._client: httpx.AsyncClient | None = None
         self._current_token: str | None = None
+        self._superseded_tokens: set[str] = set()
+        self._access_token_rotation_handler: AccessTokenRotationHandler | None = None
 
         self._logger = logger or logging.getLogger(__name__)
         self._request_count = 0
@@ -124,14 +132,27 @@ class CommonHTTPClient:
 
         return self._client
 
-    def set_auth_token(self, token: str):
+    def set_auth_token(self, token: str) -> None:
+        if token in self._superseded_tokens and self._current_token is not None:
+            self._logger.debug("Ignoring a superseded authentication token")
+            return
         self._current_token = token
         if self._client:
             self._client.headers["Authorization"] = f"Bearer {token}"
 
         self._logger.debug("Authentication token updated")
 
-    def clear_auth_token(self):
+    def replace_expired_auth_token(
+        self,
+        expired_token: str | None,
+        rotated_token: str,
+    ) -> None:
+        if expired_token is not None and expired_token != rotated_token:
+            self._superseded_tokens.add(expired_token)
+        self._current_token = None
+        self.set_auth_token(rotated_token)
+
+    def clear_auth_token(self) -> None:
         self._current_token = None
         if self._client and "Authorization" in self._client.headers:
             del self._client.headers["Authorization"]
@@ -141,10 +162,24 @@ class CommonHTTPClient:
     def get_current_token(self) -> str | None:
         return self._current_token
 
+    def set_access_token_rotation_handler(
+        self,
+        handler: AccessTokenRotationHandler,
+    ) -> None:
+        self._access_token_rotation_handler = handler
+
     async def get(
         self, endpoint: str, params: dict | None = None, **kwargs
     ) -> JSONResponse:
-        return await self._request_with_retry("GET", endpoint, params=params, **kwargs)
+        return cast(
+            JSONResponse,
+            await self._request_with_retry(
+                "GET",
+                endpoint,
+                params=params,
+                **kwargs,
+            ),
+        )
 
     async def get_bytes(
         self, endpoint: str, params: dict | None = None, **kwargs
@@ -166,15 +201,24 @@ class CommonHTTPClient:
         raise InfrastructureError("Expected binary response from HTTP request")
 
     async def post(self, endpoint: str, data: dict[str, Any], **kwargs) -> JSONResponse:
-        return await self._request_with_retry("POST", endpoint, json=data, **kwargs)
+        return cast(
+            JSONResponse,
+            await self._request_with_retry("POST", endpoint, json=data, **kwargs),
+        )
 
     async def put(self, endpoint: str, data: dict[str, Any], **kwargs) -> JSONResponse:
-        return await self._request_with_retry("PUT", endpoint, json=data, **kwargs)
+        return cast(
+            JSONResponse,
+            await self._request_with_retry("PUT", endpoint, json=data, **kwargs),
+        )
 
     async def patch(
         self, endpoint: str, data: dict[str, Any], **kwargs
     ) -> JSONResponse:
-        return await self._request_with_retry("PATCH", endpoint, json=data, **kwargs)
+        return cast(
+            JSONResponse,
+            await self._request_with_retry("PATCH", endpoint, json=data, **kwargs),
+        )
 
     async def patch_bytes(
         self,
@@ -183,25 +227,31 @@ class CommonHTTPClient:
         *,
         headers: Mapping[str, str] | None = None,
         **kwargs,
-    ) -> dict[str, Any] | list[Any] | bytes:
+    ) -> JSONResponse:
         kwargs.setdefault("timeout", self._file_transfer_timeout)
-        return await self._request_with_retry(
-            "PATCH",
-            endpoint,
-            content=content,
-            headers=self._merge_headers(
-                defaults={
-                    "Accept": "application/json",
-                    "Content-Type": "application/offset+octet-stream",
-                },
-                headers=headers,
+        return cast(
+            JSONResponse,
+            await self._request_with_retry(
+                "PATCH",
+                endpoint,
+                content=content,
+                headers=self._merge_headers(
+                    defaults={
+                        "Accept": "application/json",
+                        "Content-Type": "application/offset+octet-stream",
+                    },
+                    headers=headers,
+                ),
+                max_attempts=1,
+                **kwargs,
             ),
-            max_attempts=1,
-            **kwargs,
         )
 
     async def delete(self, endpoint: str, **kwargs) -> JSONResponse:
-        return await self._request_with_retry("DELETE", endpoint, **kwargs)
+        return cast(
+            JSONResponse,
+            await self._request_with_retry("DELETE", endpoint, **kwargs),
+        )
 
     async def _request_with_retry(
         self,
@@ -217,7 +267,10 @@ class CommonHTTPClient:
         request_id = f"{method}:{endpoint}:{self._request_count}"
         last_error: Exception | None = None
 
-        for attempt in range(1, attempts + 1):
+        attempt = 1
+        access_token_rotated = False
+        while attempt <= attempts:
+            request_token = self._current_token
             try:
                 self._attempt_count += 1
                 self._logger.debug(
@@ -230,6 +283,25 @@ class CommonHTTPClient:
                     raw_response=raw_response,
                     **kwargs,
                 )
+
+            except AccessTokenExpiredError:
+                if access_token_rotated or self._is_auth_rotation_excluded(endpoint):
+                    self._error_count += 1
+                    raise
+
+                rotation_handler = self._access_token_rotation_handler
+                if rotation_handler is None:
+                    self._error_count += 1
+                    raise
+
+                rotated_token = await rotation_handler(request_token)
+                self.replace_expired_auth_token(request_token, rotated_token)
+                access_token_rotated = True
+                self._logger.info(
+                    "Access token rotated; retrying request [%s]",
+                    request_id,
+                )
+                continue
 
             except AuthenticationError:
                 self._error_count += 1
@@ -244,6 +316,7 @@ class CommonHTTPClient:
                         f"[{request_id}]: {error.message}"
                     )
                     await asyncio.sleep(delay)
+                    attempt += 1
                     continue
 
                 self._error_count += 1
@@ -258,6 +331,7 @@ class CommonHTTPClient:
                         f"[{request_id}]: {error.message}"
                     )
                     await asyncio.sleep(delay)
+                    attempt += 1
                     continue
 
                 self._error_count += 1
@@ -362,6 +436,12 @@ class CommonHTTPClient:
         server_message = self._extract_error_message(response_data)
 
         if status_code == 401:
+            if server_message == "Token expired":
+                raise AccessTokenExpiredError(
+                    server_message,
+                    original_error=error,
+                    context=context,
+                ) from error
             raise AuthenticationError(
                 server_message or "Authentication failed",
                 original_error=error,
@@ -554,6 +634,14 @@ class CommonHTTPClient:
         if endpoint.startswith(("http://", "https://")):
             return endpoint
         return f"{self.base_url}/{endpoint.lstrip('/')}"
+
+    @staticmethod
+    def _is_auth_rotation_excluded(endpoint: str) -> bool:
+        if endpoint.startswith(("http://", "https://")):
+            endpoint = httpx.URL(endpoint).path
+        else:
+            endpoint = f"/{endpoint.lstrip('/')}"
+        return endpoint in AUTH_ROTATION_EXCLUDED_ENDPOINTS
 
     def _sanitize_sensitive_data(self, data: Any) -> Any:
         if isinstance(data, (bytes, bytearray, memoryview)):

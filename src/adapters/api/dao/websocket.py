@@ -8,7 +8,12 @@ from typing import Any
 
 import websockets
 
-from src.exceptions import AuthenticationError, InfrastructureError, NetworkError
+from src.exceptions import (
+    AccessTokenExpiredError,
+    AuthenticationError,
+    InfrastructureError,
+    NetworkError,
+)
 
 WebSocketMessage = str | bytes
 MessageHandler = Callable[[WebSocketMessage], Awaitable[None] | None]
@@ -16,6 +21,7 @@ ConnectionHandler = Callable[[bool], Awaitable[None] | None]
 
 
 class WebSocketDAO:
+    _ACCESS_TOKEN_EXPIRED_CLOSE_CODE = 4401
     _PING_INTERVAL = 20
     _PING_TIMEOUT = 10
     _CLOSE_TIMEOUT = 10
@@ -134,13 +140,34 @@ class WebSocketDAO:
                     except Exception:
                         self._logger.exception("WebSocket message handler failed")
                 drop_connection = True
+                if (
+                    self._websocket_close_code(websocket)
+                    == self._ACCESS_TOKEN_EXPIRED_CLOSE_CODE
+                ):
+                    raise AccessTokenExpiredError(
+                        "WebSocket access token expired",
+                        context={
+                            "close_code": self._ACCESS_TOKEN_EXPIRED_CLOSE_CODE
+                        },
+                    )
             except asyncio.CancelledError:
                 raise
             except AuthenticationError:
                 raise
-            except websockets.exceptions.ConnectionClosed:
+            except websockets.exceptions.ConnectionClosed as error:
                 self._logger.warning("WebSocket connection closed")
                 drop_connection = True
+                if (
+                    self._connection_closed_code(error)
+                    == self._ACCESS_TOKEN_EXPIRED_CLOSE_CODE
+                ):
+                    raise AccessTokenExpiredError(
+                        "WebSocket access token expired",
+                        original_error=error,
+                        context={
+                            "close_code": self._ACCESS_TOKEN_EXPIRED_CLOSE_CODE
+                        },
+                    ) from error
             except websockets.exceptions.WebSocketException as error:
                 self._logger.error(f"WebSocket error: {error}")
                 drop_connection = True
@@ -247,6 +274,22 @@ class WebSocketDAO:
         state = getattr(websocket, "state", None)
         state_name = getattr(state, "name", None)
         return state_name is not None and state_name != "OPEN"
+
+    @staticmethod
+    def _websocket_close_code(websocket: Any) -> int | None:
+        close_code = getattr(websocket, "close_code", None)
+        return close_code if isinstance(close_code, int) else None
+
+    @staticmethod
+    def _connection_closed_code(
+        error: websockets.exceptions.ConnectionClosed,
+    ) -> int | None:
+        close_code = getattr(error, "code", None)
+        if isinstance(close_code, int):
+            return close_code
+        received = getattr(error, "rcvd", None)
+        received_code = getattr(received, "code", None)
+        return received_code if isinstance(received_code, int) else None
 
     @staticmethod
     def _handshake_status_code(error: websockets.exceptions.InvalidStatus) -> int:

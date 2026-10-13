@@ -8,7 +8,7 @@ from dishka import Scope, make_async_container
 from src.adapters.api.dao import AuthHTTPDAO
 from src.adapters.api.service import AuthHTTPService, FileHTTPService
 from src.adapters.encryption.service import EncryptionService
-from src.providers import AppProvider
+from src.providers import AppProvider, StateProvider
 from tests.timing_wrapper import timer
 
 API_BASE_URL = "http://127.0.0.1:8000"
@@ -24,6 +24,7 @@ OUTPUT_VIDEO_PATH = (
 
 def _make_container():
     return make_async_container(
+        StateProvider(),
         AppProvider(
             scope=Scope.APP,
             logger=logging.getLogger(__name__),

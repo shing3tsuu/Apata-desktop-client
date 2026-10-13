@@ -11,7 +11,7 @@ from dishka import Scope, make_async_container
 from src.adapters.api.dao import ContactHTTPDAO
 from src.adapters.api.dto import ContactPageDTO, ContactPublicDTO
 from src.adapters.api.service import AuthHTTPService, ContactHTTPService
-from src.providers import AppProvider
+from src.providers import AppProvider, StateProvider
 from tests.timing_wrapper import timer
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
@@ -45,6 +45,7 @@ def api_base_url() -> str:
 
 def _make_container():
     return make_async_container(
+        StateProvider(),
         AppProvider(
             scope=Scope.APP,
             logger=logging.getLogger(__name__),

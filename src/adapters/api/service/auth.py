@@ -1,8 +1,11 @@
+import asyncio
 import base64
 import binascii
+import inspect
 import json
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from src.adapters.api.dto import AuthRegistrationResultDTO, AuthTokenResponseDTO
@@ -16,10 +19,17 @@ from src.exceptions import (
     KeyGenerationError,
     UserAlreadyExistsError,
     UserNotRegisteredError,
-    ValidationError, NetworkError,
+    NetworkError,
+    ValidationError,
 )
 
 from ..dao.auth import AuthHTTPDAO
+from ..dao.common import CommonHTTPClient
+
+if TYPE_CHECKING:
+    from src.providers.state import AppState
+
+SessionExpiredCallback = Callable[[], Awaitable[None] | None]
 
 
 class AuthHTTPService:
@@ -27,14 +37,20 @@ class AuthHTTPService:
         self,
         auth_dao: AuthHTTPDAO,
         encryption_service: EncryptionService,
+        app_state: "AppState",
+        http_client: CommonHTTPClient,
         logger: logging.Logger | None = None,
     ):
         self._auth_dao = auth_dao
         self._encryption_service = encryption_service
+        self._app_state = app_state
+        self._http_client = http_client
         self._logger = logger or logging.getLogger(__name__)
         self._current_token: str | None = None
         self._current_user: dict[str, Any] | None = None
         self._is_authenticated: bool = False
+        self._rotation_lock = asyncio.Lock()
+        self._session_expired_callback: SessionExpiredCallback | None = None
 
     @property
     def token(self):
@@ -47,17 +63,19 @@ class AuthHTTPService:
     def token(self, value: str) -> None:
         if not value:
             raise ValidationError("Token cannot be empty")
-        self._current_token = value
-        self._is_authenticated = True
-        self._logger.debug("Token set for session")
+        self._apply_access_token(value)
 
     @token.deleter
-    def token(self):
+    def token(self) -> None:
         old_user = self._current_user.get("username") if self._current_user else None
-        self._current_token = None
-        self._current_user = None
-        self._is_authenticated = False
+        self._clear_session()
         self._logger.info(f"Session cleared for user: {old_user}")
+
+    def set_session_expired_callback(
+        self,
+        callback: SessionExpiredCallback,
+    ) -> None:
+        self._session_expired_callback = callback
 
     def get_session_status(self) -> dict[str, Any]:
         return {
@@ -142,11 +160,7 @@ class AuthHTTPService:
 
             result = await self._auth_dao.login(username, signature)
 
-            if not result:
-                raise AuthenticationError(f"Login failed: {e.message}")
-
-            self._current_token = result.access_token
-            self._is_authenticated = True
+            self._apply_access_token(result.access_token)
             self._current_user = self._build_current_user_from_token(
                 username=username,
                 access_token=result.access_token,
@@ -154,6 +168,10 @@ class AuthHTTPService:
 
             self._logger.info(f"User '{username}' logged in successfully")
             return result
+
+        except AuthenticationError:
+            self._clear_session()
+            raise
 
         except APIError as e:
             if e.status_code == 401:
@@ -172,6 +190,40 @@ class AuthHTTPService:
             )
             self._clear_session()
             raise InfrastructureError("Login failed due to technical issue")
+
+    async def rotate_access_token(self, expired_token: str | None = None) -> str:
+        async with self._rotation_lock:
+            current_token = self._app_state.token or self._current_token
+            if (
+                expired_token is not None
+                and current_token is not None
+                and current_token != expired_token
+            ):
+                return current_token
+
+            username = self._app_state.username
+            ed_private_key = self._app_state.ed_private_key
+            if username is None or ed_private_key is None:
+                await self._invalidate_expired_session()
+                raise AuthenticationError(
+                    "Access token rotation requires a local ED25519 key"
+                )
+
+            try:
+                result = await self.login(
+                    username=username,
+                    ed_private_key=ed_private_key,
+                )
+            except Exception:
+                await self._invalidate_expired_session()
+                raise
+
+            self._http_client.replace_expired_auth_token(
+                expired_token,
+                result.access_token,
+            )
+            self._logger.info("Access token rotated successfully")
+            return result.access_token
 
     async def logout(self) -> bool:
         if not self._is_authenticated:
@@ -309,7 +361,27 @@ class AuthHTTPService:
         subject = decoded.get("sub")
         return str(subject) if subject is not None else None
 
-    def _clear_session(self):
+    def _clear_session(self) -> None:
         self._current_token = None
         self._current_user = None
         self._is_authenticated = False
+        self._http_client.clear_auth_token()
+        if self._app_state.token is not None:
+            del self._app_state.token
+
+    def _apply_access_token(self, access_token: str) -> None:
+        self._current_token = access_token
+        self._is_authenticated = True
+        self._app_state.token = access_token
+        self._http_client.set_auth_token(access_token)
+        self._logger.debug("Token set for session")
+
+    async def _invalidate_expired_session(self) -> None:
+        self._clear_session()
+        self._app_state.clear_state()
+        callback = self._session_expired_callback
+        if callback is None:
+            return
+        result = callback()
+        if inspect.isawaitable(result):
+            await result

@@ -7,6 +7,7 @@ from dishka import Scope, make_async_container
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
+from src.adapters.api.service import AuthHTTPService
 from src.presentation.interactors.login import RealtimeInteractor
 from src.presentation.pages.login import LoginInterface
 from src.presentation.pages.messenger import MessengerInterface
@@ -67,6 +68,10 @@ class MainWindow(QMainWindow):
 
         async with self.container() as request_container:
             app_state = await request_container.get(AppState)
+            auth_http_service = await request_container.get(AuthHTTPService)
+        auth_http_service.set_session_expired_callback(
+            self._handle_expired_session
+        )
         self.tray_controller = TrayController(
             window=self,
             app_state=app_state,
@@ -100,6 +105,13 @@ class MainWindow(QMainWindow):
             await self.realtime_interactor.stop()
         if self.container:
             await self.container.close()
+
+    async def _handle_expired_session(self) -> None:
+        if self.realtime_interactor is not None:
+            await self.realtime_interactor.stop()
+        if self.tray_controller is not None:
+            self.tray_controller.restore_window()
+        await self.show_screen("login")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         tray_controller = self.tray_controller

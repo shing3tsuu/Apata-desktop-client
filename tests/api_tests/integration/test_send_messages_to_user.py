@@ -15,7 +15,7 @@ from src.adapters.api.service import (
     MessageHTTPService,
 )
 from src.adapters.encryption.service import EncryptionService
-from src.providers import AppProvider
+from src.providers import AppProvider, StateProvider
 from tests.timing_wrapper import timer
 
 TEST_IMAGE_PATH = Path(__file__).parents[2] / "test_data" / "images" / "image_1.png"
@@ -32,6 +32,7 @@ def api_base_url() -> str:
 
 def _make_container():
     return make_async_container(
+        StateProvider(),
         AppProvider(
             scope=Scope.APP,
             logger=logging.getLogger(__name__),

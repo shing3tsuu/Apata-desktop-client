@@ -6,12 +6,17 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from src.exceptions import AuthenticationError, NetworkError
+from src.exceptions import (
+    AccessTokenExpiredError,
+    AuthenticationError,
+    NetworkError,
+)
 
 from ..dao.websocket import WebSocketDAO
 
 RealtimeCallback = Callable[[dict[str, Any]], Awaitable[bool | None]]
 ConnectionCallback = Callable[[bool], Awaitable[None] | None]
+AccessTokenRotationHandler = Callable[[str | None], Awaitable[str]]
 
 _REALTIME_EVENT_TYPES = {
     "presence",
@@ -29,9 +34,11 @@ class WebSocketService:
     def __init__(
         self,
         websocket_dao: WebSocketDAO,
+        access_token_rotation_handler: AccessTokenRotationHandler | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._websocket_dao = websocket_dao
+        self._access_token_rotation_handler = access_token_rotation_handler
         self._logger = logger or logging.getLogger(__name__)
         self._current_token: str | None = None
         self._event_callback: RealtimeCallback | None = None
@@ -59,6 +66,18 @@ class WebSocketService:
 
         try:
             await self._websocket_dao.connect(token)
+        except AccessTokenExpiredError:
+            try:
+                await self._rotate_access_token()
+            except NetworkError:
+                self._logger.warning(
+                    "WebSocket reconnect after token rotation will continue "
+                    "in the background"
+                )
+            except Exception:
+                self._clear_listener_state()
+                await self._websocket_dao.disconnect()
+                raise
         except AuthenticationError:
             self._clear_listener_state()
             await self._websocket_dao.disconnect()
@@ -89,6 +108,20 @@ class WebSocketService:
                     )
                 except asyncio.CancelledError:
                     raise
+                except AccessTokenExpiredError:
+                    try:
+                        await self._rotate_access_token()
+                    except NetworkError:
+                        self._logger.warning(
+                            "WebSocket reconnect after token rotation failed; "
+                            "continuing background retries"
+                        )
+                    except Exception:
+                        self._logger.exception(
+                            "WebSocket access token rotation failed"
+                        )
+                        break
+                    continue
                 except AuthenticationError:
                     self._logger.warning("WebSocket authentication expired")
                     break
@@ -161,6 +194,19 @@ class WebSocketService:
                 "online": self._desired_presence_online,
             }
         )
+
+    async def _rotate_access_token(self) -> None:
+        rotation_handler = self._access_token_rotation_handler
+        if rotation_handler is None:
+            raise AuthenticationError(
+                "WebSocket access token expired and cannot be rotated"
+            )
+        rotated_token = await rotation_handler(self._current_token)
+        if not rotated_token:
+            raise AuthenticationError("Access token rotation returned no token")
+        self._current_token = rotated_token
+        await self._websocket_dao.connect(rotated_token)
+        self._logger.info("WebSocket access token rotated")
 
     async def stop_websocket_listener(self) -> None:
         task = self._listening_task

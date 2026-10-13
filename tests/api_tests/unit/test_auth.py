@@ -12,7 +12,8 @@ from src.adapters.api.service import AuthHTTPService
 from src.adapters.encryption.service import EncryptionService
 from src.adapters.encryption.service.dto import GenerateKeyPairResult
 from src.exceptions import UserAlreadyExistsError
-from src.providers import AppProvider
+from src.providers import AppProvider, StateProvider
+from src.providers.state import AppState
 from tests.timing_wrapper import timer
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
@@ -28,6 +29,7 @@ def api_base_url() -> str:
 
 def _make_container():
     return make_async_container(
+        StateProvider(),
         AppProvider(
             scope=Scope.APP,
             logger=logging.getLogger(__name__),
@@ -162,6 +164,38 @@ def test_auth_service_login_against_live_api() -> None:
         assert current_token == login_response.access_token
         assert session_status["is_authenticated"] is True
         assert session_status["has_token"] is True
+
+    asyncio.run(scenario())
+
+
+@timer()
+def test_auth_service_renews_access_via_challenge_login_against_live_api() -> None:
+    async def scenario() -> None:
+        username = _unique_username()
+        container = _make_container()
+        try:
+            async with container() as request_container:
+                service = await request_container.get(AuthHTTPService)
+                dao = await request_container.get(AuthHTTPDAO)
+                app_state = await request_container.get(AppState)
+
+                registration = await service.register(username)
+                login = await service.login(
+                    username=username,
+                    ed_private_key=registration.ed_private_key,
+                )
+                app_state.username = username
+                app_state.ed_private_key = registration.ed_private_key
+
+                rotated_token = await service.rotate_access_token(
+                    login.access_token
+                )
+                current_user = await dao.get_current_user(rotated_token)
+        finally:
+            await container.close()
+
+        assert rotated_token
+        assert current_user["username"] == username
 
     asyncio.run(scenario())
 

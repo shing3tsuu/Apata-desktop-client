@@ -57,6 +57,10 @@ class AuthenticationError(BaseAppError):
         super().__init__(message, context)
 
 
+class AccessTokenExpiredError(AuthenticationError):
+    """Raised when an access token expired and may be rotated."""
+
+
 class ValidationError(BaseAppError):
     def __init__(
         self,
