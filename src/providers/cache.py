@@ -32,6 +32,7 @@ class MessageCache:
     reply_to_id: UUID | None = None
     reply_author: str | None = None
     reply_text: str | None = None
+    file_content: bytes | None = None
 
 
 @dataclass(slots=True)
@@ -45,6 +46,7 @@ class ContactCache:
     ed_public_key: str | None = None
     ecdh_public_key: str | None = None
     messages: list[MessageCache] = field(default_factory=list)
+    history_loaded: bool = False
 
 
 @dataclass(slots=True)
@@ -56,3 +58,4 @@ class ChatCache:
     created_at: datetime | None
     messages: list[MessageCache] = field(default_factory=list)
     participants: list[ContactCache] = field(default_factory=list)
+    history_loaded: bool = False

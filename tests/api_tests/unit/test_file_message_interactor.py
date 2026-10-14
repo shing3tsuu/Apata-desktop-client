@@ -407,6 +407,7 @@ async def test_send_contact_file_message_persists_and_updates_cache(
     assert len(cached.messages) == 1
     assert cached.messages[0].file_name == "photo.09.10.2026"
     assert cached.messages[0].content is None
+    assert cached.messages[0].file_content == file_content
 
 
 @pytest.mark.asyncio

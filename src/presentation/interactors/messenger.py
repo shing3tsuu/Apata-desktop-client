@@ -641,21 +641,19 @@ class SendContactTextMessageInteractor:
                         return False, "REPLY TARGET IS NOT AVAILABLE", None
 
                 message_http_service.token = token
-                sent_message = (
-                    await message_http_service.send_encrypted_message_text(
-                        recipient_id=contact.server_user_id,
-                        chat_id=None,
-                        message=message_text,
-                        recipient_ed_public_key=contact.ed_public_key,
-                        sender_ed_private_key=ed_private_key,
-                        sender_ecdh_private_key=ecdh_private_key,
-                        ephemeral_ecdh_public_key=ecdh_public_key,
-                        reply_to_id=(
-                            reply_target.server_message_id
-                            if reply_target is not None
-                            else None
-                        ),
-                    )
+                sent_message = await message_http_service.send_encrypted_message_text(
+                    recipient_id=contact.server_user_id,
+                    chat_id=None,
+                    message=message_text,
+                    recipient_ed_public_key=contact.ed_public_key,
+                    sender_ed_private_key=ed_private_key,
+                    sender_ecdh_private_key=ecdh_private_key,
+                    ephemeral_ecdh_public_key=ecdh_public_key,
+                    reply_to_id=(
+                        reply_target.server_message_id
+                        if reply_target is not None
+                        else None
+                    ),
                 )
                 if sent_message is None:
                     return False, "FAILED TO SEND MESSAGE", None
@@ -745,7 +743,8 @@ class SendContactTextMessageInteractor:
             )
         )
         cached_contact.messages.sort(key=lambda message: message.timestamp)
-        del cached_contact.messages[:-10]
+        if not cached_contact.history_loaded:
+            del cached_contact.messages[:-10]
 
     @staticmethod
     def _reply_preview(message: MessageCache) -> str:
@@ -870,7 +869,12 @@ class SendContactFileMessageInteractor:
                         is_delivered=True,
                     )
                 )
-                self._update_contact_cache(app_state, contact.id, saved_message)
+                self._update_contact_cache(
+                    app_state,
+                    contact.id,
+                    saved_message,
+                    file_content,
+                )
                 return True, "SUCCESS", saved_message
         except Exception as error:
             return False, str(error).upper(), None
@@ -905,6 +909,7 @@ class SendContactFileMessageInteractor:
         app_state: AppState,
         contact_id: UUID,
         saved_message: MessageDTO,
+        file_content: bytes,
     ) -> None:
         cached_contact = next(
             (
@@ -932,10 +937,185 @@ class SendContactFileMessageInteractor:
                 is_outgoing=saved_message.is_outgoing,
                 is_delivered=saved_message.is_delivered,
                 failed=saved_message.failed,
+                file_content=(
+                    file_content
+                    if saved_message.content_type is MessageContentTypeEnum.IMAGE
+                    else None
+                ),
             )
         )
         cached_contact.messages.sort(key=lambda message: message.timestamp)
-        del cached_contact.messages[:-10]
+        if not cached_contact.history_loaded:
+            del cached_contact.messages[:-10]
+
+
+class LoadConversationMessagesInteractor:
+    async def __call__(
+        self,
+        container: AsyncContainer,
+        conversation: ContactCache | ChatCache,
+        *,
+        update_cache: bool = True,
+    ) -> tuple[bool, str, list[MessageCache]]:
+        try:
+            async with container() as request_container:
+                app_state = await request_container.get(AppState)
+                local_user_id = app_state.local_user_id
+                master_key = app_state.master_key
+                if local_user_id is None or master_key is None:
+                    return False, "MESSAGE LOADING PREREQUISITES MISSING", []
+
+                message_service = await request_container.get(MessageService)
+                message_service.master_key = master_key
+                if isinstance(conversation, ContactCache):
+                    messages = await message_service.get_conversation_messages(
+                        local_user_id,
+                        contact_id=conversation.id,
+                    )
+                else:
+                    messages = await message_service.get_conversation_messages(
+                        local_user_id,
+                        chat_id=conversation.id,
+                    )
+
+                cached_messages = self._build_cache(
+                    messages,
+                    conversation,
+                    app_state,
+                )
+                if update_cache:
+                    self._replace_active_history(
+                        app_state,
+                        conversation,
+                        cached_messages,
+                    )
+                return True, "SUCCESS", cached_messages
+        except Exception as error:
+            return False, str(error).upper(), []
+
+    @staticmethod
+    def _build_cache(
+        messages: list[MessageDTO],
+        conversation: ContactCache | ChatCache,
+        app_state: AppState,
+    ) -> list[MessageCache]:
+        targets_by_id = {message.id: message for message in messages}
+        cached_messages: list[MessageCache] = []
+        for message in messages:
+            cached_message = MessageCache(
+                id=message.id,
+                server_message_id=message.server_message_id,
+                general_message_uuid=message.general_message_uuid,
+                contact_id=message.contact_id,
+                chat_id=message.chat_id,
+                content_type=message.content_type,
+                content=message.content,
+                file_name=message.file_name,
+                file_size=message.file_size,
+                file_mime_type=message.file_mime_type,
+                timestamp=message.timestamp,
+                is_outgoing=message.is_outgoing,
+                is_delivered=message.is_delivered,
+                failed=message.failed,
+                server_reply_to_id=message.server_reply_to_id,
+                reply_to_general_message_uuid=(message.reply_to_general_message_uuid),
+                reply_to_id=message.reply_to_id,
+                file_content=message.file_content,
+            )
+            if (
+                message.server_reply_to_id is not None
+                or message.reply_to_general_message_uuid is not None
+            ):
+                target = (
+                    targets_by_id.get(message.reply_to_id)
+                    if message.reply_to_id is not None
+                    else None
+                )
+                if target is None:
+                    cached_message.reply_author = "REPLY"
+                    cached_message.reply_text = "MESSAGE IS UNAVAILABLE"
+                else:
+                    cached_message.reply_author = (
+                        LoadConversationMessagesInteractor._reply_author(
+                            target,
+                            conversation,
+                            app_state,
+                        )
+                    )
+                    cached_message.reply_text = (
+                        LoadConversationMessagesInteractor._message_preview(target)
+                    )
+            cached_messages.append(cached_message)
+        return cached_messages
+
+    @staticmethod
+    def _reply_author(
+        target: MessageDTO,
+        conversation: ContactCache | ChatCache,
+        app_state: AppState,
+    ) -> str:
+        if target.is_outgoing:
+            return app_state.username or "UNKNOWN USER"
+        if isinstance(conversation, ContactCache):
+            return conversation.username
+        if target.contact_id is not None:
+            contact = next(
+                (
+                    item
+                    for item in app_state.contacts_cache
+                    if item.id == target.contact_id
+                ),
+                None,
+            )
+            if contact is not None:
+                return contact.username
+        return "UNKNOWN USER"
+
+    @staticmethod
+    def _message_preview(message: MessageDTO) -> str:
+        if message.content:
+            return " ".join(message.content.split())
+        if message.content_type is MessageContentTypeEnum.IMAGE:
+            return "PHOTO"
+        if message.content_type is MessageContentTypeEnum.VIDEO:
+            return "VIDEO"
+        return message.file_name or message.content_type.value.upper()
+
+    @staticmethod
+    def _replace_active_history(
+        app_state: AppState,
+        conversation: ContactCache | ChatCache,
+        messages: list[MessageCache],
+    ) -> None:
+        selected_contact_id = (
+            conversation.id if isinstance(conversation, ContactCache) else None
+        )
+        selected_chat_id = (
+            conversation.id if isinstance(conversation, ChatCache) else None
+        )
+        targets: list[ContactCache | ChatCache] = [conversation]
+
+        for contact in app_state.contacts_cache:
+            if contact.id == selected_contact_id:
+                if contact is not conversation:
+                    targets.append(contact)
+                continue
+            if contact.history_loaded:
+                contact.messages[:] = contact.messages[-10:]
+                contact.history_loaded = False
+
+        for chat in app_state.chats_cache:
+            if chat.id == selected_chat_id:
+                if chat is not conversation:
+                    targets.append(chat)
+                continue
+            if chat.history_loaded:
+                chat.messages[:] = chat.messages[-10:]
+                chat.history_loaded = False
+
+        for target in targets:
+            target.messages[:] = messages
+            target.history_loaded = True
 
 
 class LoadConversationFileMessagesInteractor:
@@ -1402,8 +1582,7 @@ class SendChatTextMessageInteractor:
                     failed=None,
                     reply_author=(
                         app_state.username or "UNKNOWN USER"
-                        if reply_to_message is not None
-                        and reply_to_message.is_outgoing
+                        if reply_to_message is not None and reply_to_message.is_outgoing
                         else next(
                             (
                                 contact.username
@@ -1438,7 +1617,8 @@ class SendChatTextMessageInteractor:
                 for target in cache_targets:
                     target.messages.append(cached_message)
                     target.messages.sort(key=lambda message: message.timestamp)
-                    del target.messages[:-10]
+                    if not target.history_loaded:
+                        del target.messages[:-10]
                 return True, "SUCCESS", saved_message
 
         except Exception as error:

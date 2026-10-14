@@ -409,7 +409,11 @@ class MessagesPanel(QWidget):
         conversation: Conversation | None,
         *,
         preserve_chat_members_panel: bool = False,
+        preserve_scroll_position: bool = False,
     ) -> None:
+        distance_from_bottom = (
+            self.messages_view.distance_from_bottom() if preserve_scroll_position else 0
+        )
         previous = self.selected_conversation
         conversation_changed = self._conversation_key(
             previous
@@ -417,6 +421,15 @@ class MessagesPanel(QWidget):
         if conversation_changed:
             self._loaded_file_contents.clear()
             self.message_field.clear_reply()
+        if conversation is not None:
+            self._loaded_file_contents.update(
+                {
+                    message.id: message.file_content
+                    for message in conversation.messages
+                    if message.content_type is MessageContentTypeEnum.IMAGE
+                    and message.file_content is not None
+                }
+            )
         same_chat = (
             isinstance(previous, ChatCache)
             and isinstance(conversation, ChatCache)
@@ -470,6 +483,7 @@ class MessagesPanel(QWidget):
         self._file_message_ids.clear()
         message_list.clear_messages()
         if conversation is None:
+            self.messages_view.cancel_scheduled_scroll_restore()
             return
         for message in conversation.messages:
             image_data = self._loaded_file_contents.get(message.id)
@@ -512,6 +526,7 @@ class MessagesPanel(QWidget):
                     ),
                     reply_author=message.reply_author,
                     reply_text=message.reply_text,
+                    reply_to_id=message.reply_to_id,
                 )
             else:
                 text = f"⎙ {message.file_name or message.content_type.value}"
@@ -537,9 +552,17 @@ class MessagesPanel(QWidget):
             if isinstance(bubble, (MessageBubble, ImageBubble, VideoBubble)):
                 bubble.context_action.connect(self._handle_context_action)
                 bubble.delete_requested.connect(self._delete_message)
+                message_list.register_message_widget(message.id, bubble)
             if isinstance(bubble, (ImageBubble, VideoBubble)):
                 self._file_message_ids[bubble] = message.id
-        QTimer.singleShot(0, self.messages_view._smooth_scroll_to_bottom)
+        message_list.layout().activate()
+        message_list.adjustSize()
+        if preserve_scroll_position:
+            self.messages_view.schedule_restore_distance_from_bottom(
+                distance_from_bottom
+            )
+        else:
+            self.messages_view.schedule_scroll_to_bottom()
 
     @staticmethod
     def _conversation_key(
@@ -568,7 +591,29 @@ class MessagesPanel(QWidget):
                 if message_id in message_ids
             }
         )
-        self.show_conversation(conversation, preserve_chat_members_panel=True)
+        for message in conversation.messages:
+            content = contents.get(message.id)
+            if (
+                message.content_type is MessageContentTypeEnum.IMAGE
+                and content is not None
+            ):
+                message.file_content = content
+        self.show_conversation(
+            conversation,
+            preserve_chat_members_panel=True,
+            preserve_scroll_position=True,
+        )
+
+    def missing_image_message_ids(
+        self,
+        conversation: Conversation,
+    ) -> list[UUID]:
+        return [
+            message.id
+            for message in conversation.messages
+            if message.content_type is MessageContentTypeEnum.IMAGE
+            and message.id not in self._loaded_file_contents
+        ]
 
     def _chat_message_author(
         self,
@@ -679,6 +724,7 @@ class MessagesPanel(QWidget):
             status="",
             reply_author=reply_author,
             reply_text=reply_text,
+            reply_to_id=reply.local_message_id if reply is not None else None,
         )
         bubble.context_action.connect(self._handle_context_action)
         bubble.delete_requested.connect(self._delete_message)
@@ -702,6 +748,7 @@ class MessagesPanel(QWidget):
         if success and server_message_id is not None:
             bubble.server_message_id = server_message_id
             bubble.local_message_id = local_message_id
+            self.messages_view.message_list.register_message_bubble(bubble)
             bubble.set_status("sent")
             if reply is not None and self.message_field.current_reply() == reply:
                 self.message_field.clear_reply()
@@ -748,6 +795,11 @@ class MessagesPanel(QWidget):
         if success and server_message_id is not None:
             bubble.server_message_id = server_message_id
             bubble.set_status("sent")
+            if local_message_id is not None:
+                self.messages_view.message_list.register_message_widget(
+                    local_message_id,
+                    bubble,
+                )
             if local_message_id is not None and isinstance(
                 bubble, (ImageBubble, VideoBubble)
             ):

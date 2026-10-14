@@ -834,16 +834,8 @@ class SyncMessageHistoryInteractor:
                             else None
                         ),
                         reply_to_general_message_uuid=(
-                            UUID(
-                                str(
-                                    new_message_text[
-                                        "reply_to_general_message_uuid"
-                                    ]
-                                )
-                            )
-                            if new_message_text.get(
-                                "reply_to_general_message_uuid"
-                            )
+                            UUID(str(new_message_text["reply_to_general_message_uuid"]))
+                            if new_message_text.get("reply_to_general_message_uuid")
                             is not None
                             else None
                         ),
@@ -928,12 +920,7 @@ async def _issue_and_store_ecdh_key(
     username = app_state.username
     password = app_state.password
 
-    if (
-        token is None
-        or ed_private_key is None
-        or username is None
-        or password is None
-    ):
+    if token is None or ed_private_key is None or username is None or password is None:
         return False, "OBTAINING CRYPTOGRAPHIC KEYS OPERATIONS SKIPPED"
 
     auth_http_service.token = token
@@ -1124,10 +1111,9 @@ class CacheConversationsInteractor:
             is_delivered=message.is_delivered,
             failed=message.failed,
             server_reply_to_id=message.server_reply_to_id,
-            reply_to_general_message_uuid=(
-                message.reply_to_general_message_uuid
-            ),
+            reply_to_general_message_uuid=(message.reply_to_general_message_uuid),
             reply_to_id=message.reply_to_id,
+            file_content=message.file_content,
         )
 
     async def _cache_contact_messages(

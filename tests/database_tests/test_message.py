@@ -25,6 +25,7 @@ from src.adapters.database.service import (
 from src.adapters.database.structures import (
     ContactStatusEnum,
     MessageContentMimeTypeEnum,
+    MessageContentTypeEnum,
 )
 from src.adapters.encryption.dao import (
     AbstractECDHCipher,
@@ -154,7 +155,7 @@ def master_key():
 
 
 @pytest.mark.asyncio
-async def test_conversation_cache_loads_recent_messages_without_file_payload(
+async def test_conversation_cache_preloads_only_recent_image_payloads(
     container, message_service, test_user, test_contact, master_key
 ):
     message_service.master_key = master_key
@@ -192,6 +193,22 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
             )
         )
 
+    image_content = b"recent image payload"
+    await message_service.add_message_file(
+        AddMessageFileDTO(
+            local_user_id=test_user.id,
+            server_message_id=uuid.uuid7(),
+            contact_id=test_contact.id,
+            file_name="recent-photo",
+            file_content=image_content,
+            file_size=len(image_content),
+            file_mime_type=MessageContentMimeTypeEnum.PNG,
+            content_type=MessageContentTypeEnum.IMAGE,
+            timestamp=started_at + timedelta(minutes=12),
+            is_outgoing=False,
+        )
+    )
+
     await message_service.add_message_text(
         AddMessageTextDTO(
             local_user_id=test_user.id,
@@ -224,14 +241,16 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
     assert success, message
     assert counts == {"contacts": 1, "chats": 1, "messages": 12}
     assert [item.content for item in app_state.contacts_cache[0].messages] == [
-        f"Text {index}" for index in range(2, 12)
+        *[f"Text {index}" for index in range(3, 12)],
+        None,
     ]
+    assert app_state.contacts_cache[0].messages[-1].file_content == image_content
     assert [item.content for item in app_state.chats_cache[0].messages] == [
         "Group text",
         None,
     ]
     assert app_state.chats_cache[0].messages[-1].file_name == "attachment"
-    assert not hasattr(app_state.chats_cache[0].messages[-1], "file_content")
+    assert app_state.chats_cache[0].messages[-1].file_content is None
     assert app_state.chats_cache[0].participants == [app_state.contacts_cache[0]]
     assert app_state.chats_cache[0].participants[0] is app_state.contacts_cache[0]
     assert [
@@ -239,6 +258,24 @@ async def test_conversation_cache_loads_recent_messages_without_file_payload(
         for item in app_state.contacts_cache[0].messages
         if item.failed is True
     ] == ["Text 10"]
+
+    contact_history = await message_service.get_conversation_messages(
+        test_user.id,
+        contact_id=test_contact.id,
+    )
+    chat_history = await message_service.get_conversation_messages(
+        test_user.id,
+        chat_id=chat.id,
+    )
+
+    assert [message.content for message in contact_history] == [
+        *[f"Text {index}" for index in range(12)],
+        None,
+    ]
+    assert contact_history[-1].file_content is None
+    assert [message.content for message in chat_history] == ["Group text", None]
+    assert chat_history[-1].file_name == "attachment"
+    assert chat_history[-1].file_content is None
 
 
 @pytest.mark.asyncio

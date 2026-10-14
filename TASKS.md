@@ -524,3 +524,25 @@ Add client and server unit tests plus a live integration scenario covering:
 Run the relevant client and server test suites, Ruff, and mypy. Keep this task open until both HTTP and realtime continue operating across real access-token expiration without manual login and without any new auth HTTP route.
 
 closed: true
+
+## Task 15 — Navigate from Replies to Original Messages
+
+Make the quoted-message block inside a text message clickable with the left mouse button. Use the existing local `reply_to_id` relation as the stable target identity; do not search by author, text, timestamp, or server-side data. Clicking the quote must smoothly scroll the active conversation to the original message and briefly highlight the destination so it is easy to identify.
+
+When a direct conversation or chat is selected, load its complete local message history from SQLite into that conversation's active cache before rendering it. Replace the previous conversation's loaded message list instead of retaining complete histories for every conversation in memory. Keep the lightweight startup cache for conversation previews, and do not request already synchronized history from the server merely to navigate to a reply. Switching conversations must discard the no-longer-active full-history cache and load the newly selected conversation from the local database.
+
+Keep message lookup scoped to the selected conversation. Missing or deleted reply targets must remain non-navigable and continue rendering the existing unavailable fallback. Preserve right-click message actions, image/video behavior, realtime cache refreshes, chronological ordering, day dividers, and pending outgoing messages.
+
+Add focused tests for full-history loading and cache replacement when switching between direct conversations and chats, clickable reply target identity, smooth-scroll destination lookup, unavailable targets, and preservation of existing message interactions. Run the relevant tests, Ruff, and mypy before closing the task.
+
+### Implementation progress
+
+- Added a local database query and messenger interactor that load the complete selected direct or chat history without loading file payloads. Only the active conversation retains full history; the previous cache returns to its ten-message preview window.
+- Added local-message widget indexing for text, image, video, and generic file messages. Reply blocks use `reply_to_id`, remain disabled when the target is unavailable, smoothly center the original message, and briefly highlight the destination.
+- Existing pending-message, right-click, media, realtime refresh, and file-loading paths now preserve the active full-history cache and register newly persisted messages as navigation targets.
+- Conversation selection renders the existing ten-message preview immediately, then starts the complete local-history interactor as an `asyncio.create_task`. The task returns data without mutating active UI state; the result is applied only if that conversation is still selected.
+- Opening a conversation now positions the preview at the bottom immediately without animating through intermediate messages. Applying the complete history or loaded file contents preserves the current distance from the bottom, so background rendering does not fight manual scrolling or jerk the viewport.
+- The lightweight ten-message startup preview now includes decrypted payloads only for image messages. Those images render immediately, survive replacement by the complete metadata-only history, and are excluded from duplicate lazy-loading requests; videos and other files remain lazy.
+- Added focused database, interactor, and Qt UI coverage, including verification that the ten-message preview remains visible until the background task applies the full history. The targeted database, file-interactor, and UI suites pass with `99 passed`; Ruff, Ruff formatting, Python compilation, and whitespace checks also pass. Mypy remains unavailable because the copied project virtual environment points to a missing Python installation.
+
+closed: true

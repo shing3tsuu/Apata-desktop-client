@@ -11,13 +11,14 @@ from PyQt6.QtWidgets import (
 
 from src.adapters.api.dto import ContactPublicDTO
 from src.adapters.database.dto import ContactDTO
-from src.adapters.database.structures import ContactStatusEnum, MessageContentTypeEnum
+from src.adapters.database.structures import ContactStatusEnum
 from src.presentation.interactors.messenger import (
     AcceptContactRequestInteractor,
     AddChatParticipantInteractor,
     BlacklistContactInteractor,
     CreateChatInteractor,
     GetChatReplyTargetsInteractor,
+    LoadConversationMessagesInteractor,
     LoadConversationFileMessagesInteractor,
     SaveMessageFileToDiskInteractor,
     SearchContactsGlobalInteractor,
@@ -27,7 +28,7 @@ from src.presentation.interactors.messenger import (
     SendContactRequestInteractor,
     SendContactTextMessageInteractor,
 )
-from src.providers.cache import ChatCache, ContactCache
+from src.providers.cache import ChatCache, ContactCache, MessageCache
 from src.providers.state import AppState
 
 from .demo_data import build_demo_conversations
@@ -58,6 +59,7 @@ class MessengerInterface(QWidget):
         self._current_username: str | None = None
         self._search_task: asyncio.Task[None] | None = None
         self._chat_creation_task: asyncio.Task[None] | None = None
+        self._conversation_loading_task: asyncio.Task[None] | None = None
         self._file_loading_task: asyncio.Task[None] | None = None
         self._chat_participant_tasks: dict[tuple[UUID, UUID], asyncio.Task[None]] = {}
         self._message_tasks: set[asyncio.Task[None]] = set()
@@ -279,11 +281,132 @@ class MessengerInterface(QWidget):
         *,
         preserve_chat_members_panel: bool = False,
     ) -> None:
+        previous = self.messages_panel.selected_conversation
+        conversation_changed = self._conversation_key(
+            previous
+        ) != self._conversation_key(conversation)
+        if conversation_changed:
+            self._release_loaded_history(previous)
         self.messages_panel.show_conversation(
             conversation,
             preserve_chat_members_panel=preserve_chat_members_panel,
+            preserve_scroll_position=not conversation_changed,
         )
         self._schedule_file_loading(conversation)
+        self._schedule_conversation_loading(conversation)
+
+    @staticmethod
+    def _conversation_key(
+        conversation: ContactCache | ChatCache | None,
+    ) -> tuple[str, UUID] | None:
+        if isinstance(conversation, ContactCache):
+            return "contact", conversation.id
+        if isinstance(conversation, ChatCache):
+            return "chat", conversation.id
+        return None
+
+    @staticmethod
+    def _release_loaded_history(
+        conversation: ContactCache | ChatCache | None,
+    ) -> None:
+        if conversation is None or not conversation.history_loaded:
+            return
+        conversation.messages[:] = conversation.messages[-10:]
+        conversation.history_loaded = False
+
+    def _schedule_conversation_loading(
+        self,
+        conversation: ContactCache | ChatCache | None,
+    ) -> None:
+        if (
+            self._conversation_loading_task is not None
+            and not self._conversation_loading_task.done()
+        ):
+            self._conversation_loading_task.cancel()
+        self._conversation_loading_task = None
+
+        if conversation is None:
+            return
+        if self.main_window is None or self.main_window.container is None:
+            return
+
+        task = asyncio.create_task(self._load_conversation_messages(conversation))
+        self._conversation_loading_task = task
+        task.add_done_callback(self._finish_conversation_loading)
+
+    def _finish_conversation_loading(self, task: asyncio.Task[None]) -> None:
+        if self._conversation_loading_task is task:
+            self._conversation_loading_task = None
+
+    async def _load_conversation_messages(
+        self,
+        conversation: ContactCache | ChatCache,
+    ) -> None:
+        try:
+            container = self.main_window.container
+            (
+                success,
+                status_message,
+                messages,
+            ) = await LoadConversationMessagesInteractor()(
+                container,
+                conversation,
+                update_cache=False,
+            )
+            if not success:
+                logger.warning(
+                    "Failed to load conversation messages for %s: %s",
+                    self._conversation_key(conversation),
+                    status_message,
+                )
+                return
+            selected = self.messages_panel.selected_conversation
+            if self._conversation_key(selected) != self._conversation_key(conversation):
+                return
+            if selected is None:
+                return
+            self._apply_loaded_history(selected, messages)
+            self.messages_panel.show_conversation(
+                selected,
+                preserve_chat_members_panel=True,
+                preserve_scroll_position=True,
+            )
+            self._schedule_file_loading(selected)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Unexpected conversation message loading error for %s",
+                self._conversation_key(conversation),
+            )
+
+    def _apply_loaded_history(
+        self,
+        conversation: ContactCache | ChatCache,
+        messages: list[MessageCache],
+    ) -> None:
+        cached_file_contents = {
+            message.id: message.file_content
+            for message in conversation.messages
+            if message.file_content is not None
+        }
+        for message in messages:
+            if message.file_content is None:
+                message.file_content = cached_file_contents.get(message.id)
+
+        selected_key = self._conversation_key(conversation)
+        matching_cache_found = False
+        for cached in [*self._contacts, *self._chats]:
+            if self._conversation_key(cached) == selected_key:
+                cached.messages[:] = messages
+                cached.history_loaded = True
+                matching_cache_found = True
+            else:
+                self._release_loaded_history(cached)
+
+        if not matching_cache_found:
+            conversation.messages[:] = messages
+            conversation.history_loaded = True
 
     def _schedule_file_loading(
         self,
@@ -298,11 +421,7 @@ class MessengerInterface(QWidget):
         if self.main_window is None or self.main_window.container is None:
             return
 
-        message_ids = [
-            message.id
-            for message in conversation.messages
-            if message.content_type == MessageContentTypeEnum.IMAGE
-        ]
+        message_ids = self.messages_panel.missing_image_message_ids(conversation)
         if not message_ids:
             return
 
@@ -534,12 +653,14 @@ class MessengerInterface(QWidget):
             else:
                 reply_targets: dict[UUID, UUID] | None = None
                 if reply_to_message is not None:
-                    targets_success, targets_status, reply_targets = (
-                        await GetChatReplyTargetsInteractor()(
-                            self.main_window.container,
-                            conversation,
-                            reply_to_message.general_message_uuid,
-                        )
+                    (
+                        targets_success,
+                        targets_status,
+                        reply_targets,
+                    ) = await GetChatReplyTargetsInteractor()(
+                        self.main_window.container,
+                        conversation,
+                        reply_to_message.general_message_uuid,
                     )
                     if not targets_success:
                         self.messages_panel.finish_text_message(

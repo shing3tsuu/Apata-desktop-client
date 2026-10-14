@@ -44,6 +44,7 @@ from src.presentation.interactors.messenger import (
     BlacklistContactInteractor,
     CreateChatInteractor,
     GetChatReplyTargetsInteractor,
+    LoadConversationMessagesInteractor,
     SearchContactsGlobalInteractor,
     SendChatTextMessageInteractor,
     SendContactRequestInteractor,
@@ -84,6 +85,31 @@ class FakeContactHTTPService:
     async def search_all_contacts(self, username: str) -> list[ContactPublicDTO]:
         self.queries.append(username)
         return self.page.items
+
+
+def make_cached_message(
+    *,
+    local_message_id: UUID | None = None,
+    contact_id: UUID | None = None,
+    chat_id: UUID | None = None,
+    content: str = "message",
+    is_outgoing: bool = False,
+    timestamp: datetime | None = None,
+) -> MessageCache:
+    return MessageCache(
+        id=local_message_id or uuid4(),
+        server_message_id=uuid4(),
+        contact_id=contact_id,
+        chat_id=chat_id,
+        content_type=MessageContentTypeEnum.TEXT,
+        content=content,
+        file_name=None,
+        file_size=None,
+        file_mime_type=None,
+        timestamp=timestamp or datetime.now(timezone.utc),
+        is_outgoing=is_outgoing,
+        is_delivered=True,
+    )
 
 
 def make_contact(user_id: str, username: str) -> ContactPublicDTO:
@@ -640,7 +666,9 @@ async def test_add_chat_participant_interactor_persists_event_and_shared_cache(
 
 
 @pytest.mark.asyncio
-async def test_add_chat_participant_interactor_rejects_invalid_candidates_early() -> None:
+async def test_add_chat_participant_interactor_rejects_invalid_candidates_early() -> (
+    None
+):
     chat = ChatCache(
         id=uuid4(),
         server_chat_id=uuid4(),
@@ -675,7 +703,9 @@ async def test_add_chat_participant_interactor_rejects_invalid_candidates_early(
 
 
 @pytest.mark.asyncio
-async def test_add_chat_participant_interactor_rejects_mismatched_server_response() -> None:
+async def test_add_chat_participant_interactor_rejects_mismatched_server_response() -> (
+    None
+):
     local_user_id = uuid4()
     server_user_id = uuid4()
     chat = ChatCache(
@@ -1500,7 +1530,9 @@ async def test_get_chat_reply_targets_interactor_returns_recipient_mapping() -> 
 
 
 @pytest.mark.asyncio
-async def test_get_chat_reply_targets_interactor_rejects_missing_identity_early() -> None:
+async def test_get_chat_reply_targets_interactor_rejects_missing_identity_early() -> (
+    None
+):
     chat = ChatCache(
         id=uuid4(),
         server_chat_id=uuid4(),
@@ -1839,3 +1871,187 @@ async def test_send_chat_text_message_syncs_missing_contacts_once() -> None:
     contact_http_service.list_all_contacts.assert_awaited_once()
     contact_service.add_contact.assert_awaited_once()
     message_service.add_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_load_contact_history_replaces_only_active_full_cache() -> None:
+    local_user_id = uuid4()
+    selected_contact = make_cached_contact(local_contact_id=uuid4())
+    previous_contact = make_cached_contact(local_contact_id=uuid4())
+    previous_contact.messages = [
+        make_cached_message(
+            contact_id=previous_contact.id,
+            content=f"old {index}",
+            timestamp=datetime(2026, 10, 1, index, tzinfo=timezone.utc),
+        )
+        for index in range(12)
+    ]
+    previous_contact.history_loaded = True
+
+    source = MessageDTO.model_construct(
+        id=uuid4(),
+        local_user_id=local_user_id,
+        server_message_id=uuid4(),
+        general_message_uuid=None,
+        server_reply_to_id=None,
+        reply_to_general_message_uuid=None,
+        reply_to_id=None,
+        contact_id=selected_contact.id,
+        chat_id=None,
+        content_type=MessageContentTypeEnum.TEXT,
+        content="original",
+        file_name=None,
+        file_content=None,
+        file_size=None,
+        file_mime_type=None,
+        timestamp=datetime(2026, 10, 2, 10, tzinfo=timezone.utc),
+        is_outgoing=False,
+        is_delivered=True,
+        failed=None,
+    )
+    reply = MessageDTO.model_construct(
+        id=uuid4(),
+        local_user_id=local_user_id,
+        server_message_id=uuid4(),
+        general_message_uuid=None,
+        server_reply_to_id=source.server_message_id,
+        reply_to_general_message_uuid=None,
+        reply_to_id=source.id,
+        contact_id=selected_contact.id,
+        chat_id=None,
+        content_type=MessageContentTypeEnum.TEXT,
+        content="reply",
+        file_name=None,
+        file_content=None,
+        file_size=None,
+        file_mime_type=None,
+        timestamp=datetime(2026, 10, 2, 11, tzinfo=timezone.utc),
+        is_outgoing=True,
+        is_delivered=True,
+        failed=None,
+    )
+    app_state = AppState()
+    app_state.local_user_id = local_user_id
+    app_state.master_key = b"master-key"
+    app_state.username = "owner"
+    app_state.contacts_cache = [previous_contact, selected_contact]
+    message_service = MagicMock(spec=MessageService)
+    message_service.get_conversation_messages = AsyncMock(return_value=[source, reply])
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                MessageService: message_service,
+            }
+        ),
+    )
+
+    success, status, messages = await LoadConversationMessagesInteractor()(
+        container,
+        selected_contact,
+    )
+
+    assert success, status
+    message_service.get_conversation_messages.assert_awaited_once_with(
+        local_user_id,
+        contact_id=selected_contact.id,
+    )
+    assert selected_contact.history_loaded is True
+    assert selected_contact.messages == messages
+    assert messages[1].reply_to_id == source.id
+    assert messages[1].reply_author == selected_contact.username
+    assert messages[1].reply_text == "original"
+    assert previous_contact.history_loaded is False
+    assert [message.content for message in previous_contact.messages] == [
+        f"old {index}" for index in range(2, 12)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_load_chat_history_resolves_reply_author_from_contact_cache() -> None:
+    local_user_id = uuid4()
+    sender = make_cached_contact(local_contact_id=uuid4())
+    chat = ChatCache(
+        id=uuid4(),
+        server_chat_id=uuid4(),
+        server_owner_id=uuid4(),
+        name="chat",
+        created_at=datetime.now(timezone.utc),
+        participants=[sender],
+    )
+    general_message_uuid = uuid4()
+    source = MessageDTO.model_construct(
+        id=uuid4(),
+        local_user_id=local_user_id,
+        server_message_id=uuid4(),
+        general_message_uuid=general_message_uuid,
+        server_reply_to_id=None,
+        reply_to_general_message_uuid=None,
+        reply_to_id=None,
+        contact_id=sender.id,
+        chat_id=chat.id,
+        content_type=MessageContentTypeEnum.TEXT,
+        content="group original",
+        file_name=None,
+        file_content=None,
+        file_size=None,
+        file_mime_type=None,
+        timestamp=datetime(2026, 10, 3, 10, tzinfo=timezone.utc),
+        is_outgoing=False,
+        is_delivered=True,
+        failed=None,
+    )
+    reply = MessageDTO.model_construct(
+        id=uuid4(),
+        local_user_id=local_user_id,
+        server_message_id=uuid4(),
+        general_message_uuid=uuid4(),
+        server_reply_to_id=None,
+        reply_to_general_message_uuid=general_message_uuid,
+        reply_to_id=source.id,
+        contact_id=None,
+        chat_id=chat.id,
+        content_type=MessageContentTypeEnum.TEXT,
+        content="group reply",
+        file_name=None,
+        file_content=None,
+        file_size=None,
+        file_mime_type=None,
+        timestamp=datetime(2026, 10, 3, 11, tzinfo=timezone.utc),
+        is_outgoing=True,
+        is_delivered=True,
+        failed=None,
+    )
+    app_state = AppState()
+    app_state.local_user_id = local_user_id
+    app_state.master_key = b"master-key"
+    app_state.username = "owner"
+    app_state.contacts_cache = [sender]
+    app_state.chats_cache = [chat]
+    message_service = MagicMock(spec=MessageService)
+    message_service.get_conversation_messages = AsyncMock(return_value=[source, reply])
+    container = cast(
+        AsyncContainer,
+        FakeContainer(
+            {
+                AppState: app_state,
+                MessageService: message_service,
+            }
+        ),
+    )
+
+    success, status, messages = await LoadConversationMessagesInteractor()(
+        container,
+        chat,
+    )
+
+    assert success, status
+    message_service.get_conversation_messages.assert_awaited_once_with(
+        local_user_id,
+        chat_id=chat.id,
+    )
+    assert chat.history_loaded is True
+    assert messages[1].reply_to_id == source.id
+    assert messages[1].reply_author == sender.username
+    assert messages[1].reply_text == "group original"

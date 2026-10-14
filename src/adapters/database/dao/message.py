@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import and_, delete, insert, select, update
+from sqlalchemy import and_, case, delete, insert, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from src.adapters.database.dto import (
 )
 from src.adapters.database.structures import (
     Message,
+    MessageContentTypeEnum,
 )
 
 
@@ -40,6 +41,16 @@ class AbstractMessageDAO(ABC):
         contact_id: UUID | None = None,
         chat_id: UUID | None = None,
         limit: int = 10,
+    ) -> list[MessageDTO]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def get_conversation_messages(
+        self,
+        local_user_id: UUID,
+        *,
+        contact_id: UUID | None = None,
+        chat_id: UUID | None = None,
     ) -> list[MessageDTO]:
         raise NotImplementedError()
 
@@ -262,6 +273,13 @@ class MessageDAO(AbstractMessageDAO):
                 Message.content_type,
                 Message.content,
                 Message.file_name,
+                case(
+                    (
+                        Message.content_type == MessageContentTypeEnum.IMAGE,
+                        Message.file_content,
+                    ),
+                    else_=None,
+                ).label("file_content"),
                 Message.file_size,
                 Message.file_mime_type,
                 Message.timestamp,
@@ -277,8 +295,55 @@ class MessageDAO(AbstractMessageDAO):
             stmt = stmt.where(Message.chat_id.is_(None))
         result = await self._session.execute(stmt)
         return [
-            MessageDTO.model_validate({**row, "file_content": None})
+            MessageDTO.model_validate({**row})
             for row in reversed(result.mappings().all())
+        ]
+
+    async def get_conversation_messages(
+        self,
+        local_user_id: UUID,
+        *,
+        contact_id: UUID | None = None,
+        chat_id: UUID | None = None,
+    ) -> list[MessageDTO]:
+        if (contact_id is None) == (chat_id is None):
+            raise ValueError("Exactly one conversation ID is required")
+
+        conversation_filter = (
+            Message.contact_id == contact_id
+            if contact_id is not None
+            else Message.chat_id == chat_id
+        )
+        stmt = (
+            select(
+                Message.id,
+                Message.local_user_id,
+                Message.server_message_id,
+                Message.general_message_uuid,
+                Message.server_reply_to_id,
+                Message.reply_to_general_message_uuid,
+                Message.reply_to_id,
+                Message.contact_id,
+                Message.chat_id,
+                Message.content_type,
+                Message.content,
+                Message.file_name,
+                Message.file_size,
+                Message.file_mime_type,
+                Message.timestamp,
+                Message.is_outgoing,
+                Message.is_delivered,
+                Message.failed,
+            )
+            .where(Message.local_user_id == local_user_id, conversation_filter)
+            .order_by(Message.timestamp.asc(), Message.id.asc())
+        )
+        if contact_id is not None:
+            stmt = stmt.where(Message.chat_id.is_(None))
+        result = await self._session.execute(stmt)
+        return [
+            MessageDTO.model_validate({**row, "file_content": None})
+            for row in result.mappings().all()
         ]
 
     async def get_file_messages(

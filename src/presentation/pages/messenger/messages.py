@@ -4,6 +4,7 @@ from uuid import UUID
 
 from PyQt6.QtCore import (
     QEasingCurve,
+    QPoint,
     QPointF,
     QPropertyAnimation,
     QRect,
@@ -184,6 +185,7 @@ class DayDivider(QWidget):
 class MessageBubble(QWidget):
     context_action = pyqtSignal(str)
     delete_requested = pyqtSignal(object)
+    reply_activated = pyqtSignal(object)
 
     def __init__(
         self,
@@ -201,6 +203,7 @@ class MessageBubble(QWidget):
         author: str | None = None,
         reply_author: str | None = None,
         reply_text: str | None = None,
+        reply_to_id: UUID | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -218,6 +221,8 @@ class MessageBubble(QWidget):
         self.author = author
         self.reply_author = reply_author
         self.reply_text = reply_text
+        self.reply_to_id = reply_to_id
+        self._reply_navigation_enabled = reply_to_id is not None
 
         if self.is_mine:
             if self.status == "failed":
@@ -230,8 +235,14 @@ class MessageBubble(QWidget):
             self.current_bg_color = self.color_inactive
 
         self._anim_timer: QTimer | None = None
+        self._reply_hovered = False
+        self._highlighted = False
+        self._highlight_timer = QTimer(self)
+        self._highlight_timer.setSingleShot(True)
+        self._highlight_timer.timeout.connect(self._clear_highlight)
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMouseTracking(True)
 
         self._font = QFont("Roboto", 11)
         self._meta_font = QFont("Roboto", 8)
@@ -436,6 +447,12 @@ class MessageBubble(QWidget):
         pen.setWidth(1)
         painter.setPen(pen)
         painter.drawPath(path)
+        if self._highlighted:
+            highlight_pen = QPen(QColor(self.color_primary))
+            highlight_pen.setWidth(2)
+            painter.setPen(highlight_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
 
         content_x = bx + self._padding_x
         content_y = by + self._padding_y
@@ -462,7 +479,7 @@ class MessageBubble(QWidget):
                 reply_height - 4,
             )
             quote_background = QColor(COLOR_MESSAGE_TEXT)
-            quote_background.setAlpha(28)
+            quote_background.setAlpha(44 if self._reply_hovered else 28)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(quote_background)
             painter.drawRoundedRect(quote_rect, 4, 4)
@@ -583,12 +600,73 @@ class MessageBubble(QWidget):
         path.closeSubpath()
         return path
 
+    def _reply_rect(self) -> QRect:
+        if not self.reply_author or not self.reply_text:
+            return QRect()
+        content_width, _, author_height, reply_height = self._content_size()
+        bubble_w, _ = self._get_bubble_size()
+        margin = 16
+        bx = self.width() - bubble_w - margin if self.is_mine else margin
+        content_x = bx + self._padding_x
+        content_y = 4 + self._padding_y + author_height
+        return QRect(
+            content_x - 1,
+            content_y,
+            content_width,
+            reply_height - 4,
+        )
+
+    def highlight(self) -> None:
+        self._highlighted = True
+        self._highlight_timer.start(900)
+        self.update()
+
+    def set_reply_navigation_enabled(self, enabled: bool) -> None:
+        self._reply_navigation_enabled = enabled and self.reply_to_id is not None
+        if not self._reply_navigation_enabled and self._reply_hovered:
+            self._reply_hovered = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
+
+    def _clear_highlight(self) -> None:
+        self._highlighted = False
+        self.update()
+
     def mousePressEvent(self, event):
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._reply_navigation_enabled
+            and self._reply_rect().contains(event.pos())
+        ):
+            self.reply_activated.emit(self.reply_to_id)
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.RightButton:
             if self._bubble_path().contains(QPointF(event.pos())):
                 self._show_context_menu(event.pos())
             return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        reply_hovered = self._reply_navigation_enabled and self._reply_rect().contains(
+            event.pos()
+        )
+        if reply_hovered != self._reply_hovered:
+            self._reply_hovered = reply_hovered
+            self.setCursor(
+                Qt.CursorShape.PointingHandCursor
+                if reply_hovered
+                else Qt.CursorShape.ArrowCursor
+            )
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if self._reply_hovered:
+            self._reply_hovered = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
+        super().leaveEvent(event)
 
     def _show_context_menu(self, pos):
         menu = QMenu(self)
@@ -720,6 +798,10 @@ class ImageBubble(QWidget):
             self.current_bg_color = self.color_inactive
 
         self._anim_timer: QTimer | None = None
+        self._highlighted = False
+        self._highlight_timer = QTimer(self)
+        self._highlight_timer.setSingleShot(True)
+        self._highlight_timer.timeout.connect(self._clear_highlight)
 
         self._margin = 16
         self._max_img_w = 320
@@ -812,6 +894,15 @@ class ImageBubble(QWidget):
         path.closeSubpath()
         return path
 
+    def highlight(self) -> None:
+        self._highlighted = True
+        self._highlight_timer.start(900)
+        self.update()
+
+    def _clear_highlight(self) -> None:
+        self._highlighted = False
+        self.update()
+
     def _update_spinner_pos(self):
         if not self.is_mine:
             return
@@ -878,6 +969,12 @@ class ImageBubble(QWidget):
         pen.setWidth(1)
         painter.setPen(pen)
         painter.drawPath(path)
+        if self._highlighted:
+            highlight_pen = QPen(QColor(self.color_primary))
+            highlight_pen.setWidth(2)
+            painter.setPen(highlight_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
 
         # Изображение внутри
         if not self._pixmap.isNull():
@@ -985,6 +1082,10 @@ class VideoBubble(QWidget):
             self.current_bg_color = self.color_inactive
 
         self._anim_timer: QTimer | None = None
+        self._highlighted = False
+        self._highlight_timer = QTimer(self)
+        self._highlight_timer.setSingleShot(True)
+        self._highlight_timer.timeout.connect(self._clear_highlight)
 
         self._margin = 16
         self._thumb_w = 320
@@ -1094,6 +1195,15 @@ class VideoBubble(QWidget):
         path.closeSubpath()
         return path
 
+    def highlight(self) -> None:
+        self._highlighted = True
+        self._highlight_timer.start(900)
+        self.update()
+
+    def _clear_highlight(self) -> None:
+        self._highlighted = False
+        self.update()
+
     def _update_spinner_pos(self):
         if not self.is_mine:
             return
@@ -1160,6 +1270,12 @@ class VideoBubble(QWidget):
         pen.setWidth(1)
         painter.setPen(pen)
         painter.drawPath(path)
+        if self._highlighted:
+            highlight_pen = QPen(QColor(self.color_primary))
+            highlight_pen.setWidth(2)
+            painter.setPen(highlight_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
 
         thumb_x = bx + self._padding_x
         thumb_y = by + self._padding_y
@@ -1394,6 +1510,8 @@ class VideoViewer(QWidget):
 
 
 class MessageList(QWidget):
+    reply_target_requested = pyqtSignal(object)
+
     def __init__(
         self,
         color_primary: str,
@@ -1419,6 +1537,7 @@ class MessageList(QWidget):
         self.setLayout(self._layout)
 
         self._last_date: tuple[int, int, int] | None = None
+        self._message_widgets: dict[UUID, QWidget] = {}
 
     def _divider(self, current_date: datetime):
         local_date = _as_local(current_date)
@@ -1444,6 +1563,7 @@ class MessageList(QWidget):
         author: str | None = None,
         reply_author: str | None = None,
         reply_text: str | None = None,
+        reply_to_id: UUID | None = None,
     ) -> MessageBubble:
         timestamp = _as_utc(timestamp)
         self._divider(timestamp)
@@ -1462,9 +1582,35 @@ class MessageList(QWidget):
             author=author,
             reply_author=reply_author,
             reply_text=reply_text,
+            reply_to_id=reply_to_id,
         )
+        bubble.set_reply_navigation_enabled(
+            reply_to_id is not None and reply_to_id in self._message_widgets
+        )
+        bubble.reply_activated.connect(self.reply_target_requested.emit)
         self._layout.addWidget(bubble)
+        self.register_message_bubble(bubble)
         return bubble
+
+    def register_message_bubble(self, bubble: MessageBubble) -> None:
+        if bubble.local_message_id is not None:
+            self.register_message_widget(bubble.local_message_id, bubble)
+
+    def register_message_widget(self, message_id: UUID, widget: QWidget) -> None:
+        self._message_widgets[message_id] = widget
+        for candidate in self._message_widgets.values():
+            if (
+                isinstance(candidate, MessageBubble)
+                and candidate.reply_to_id == message_id
+            ):
+                candidate.set_reply_navigation_enabled(True)
+
+    def message_widget(self, message_id: UUID) -> QWidget | None:
+        return self._message_widgets.get(message_id)
+
+    def message_bubble(self, message_id: UUID) -> MessageBubble | None:
+        widget = self.message_widget(message_id)
+        return widget if isinstance(widget, MessageBubble) else None
 
     def add_video(
         self,
@@ -1543,6 +1689,7 @@ class MessageList(QWidget):
         return bubble
 
     def clear_messages(self):
+        self._message_widgets.clear()
         while self._layout.count():
             item = self._layout.takeAt(0)
             widget = item.widget() if item is not None else None
@@ -1593,22 +1740,60 @@ class MessagesView(QWidget):
             self.color_third,
             parent,
         )
+        self.message_list.reply_target_requested.connect(self._smooth_scroll_to_message)
         scroll.setWidget(self.message_list)
         self._scroll = scroll
+        self._scroll_restore_generation = 0
 
         layout.addWidget(scroll)
         self.setLayout(layout)
 
-        QTimer.singleShot(50, self._smooth_scroll_to_bottom)
+    def distance_from_bottom(self) -> int:
+        scrollbar = self._scroll.verticalScrollBar()
+        if scrollbar is None:
+            return 0
+        return max(0, scrollbar.maximum() - scrollbar.value())
 
-    # def _scroll_to_bottom(self):
-    #    bar = self._scroll.verticalScrollBar()
-    #    bar.setValue(bar.maximum())
+    def schedule_scroll_to_bottom(self) -> None:
+        self.schedule_restore_distance_from_bottom(0)
 
-    def _smooth_scroll_to_bottom(self):
+    def schedule_restore_distance_from_bottom(self, distance: int) -> None:
+        self._scroll_restore_generation += 1
+        generation = self._scroll_restore_generation
+        QTimer.singleShot(
+            0,
+            lambda: self._restore_distance_from_bottom(generation, distance),
+        )
+
+    def cancel_scheduled_scroll_restore(self) -> None:
+        self._scroll_restore_generation += 1
+        existing_animation = getattr(self, "_scroll_animation", None)
+        if existing_animation is not None:
+            existing_animation.stop()
+
+    def _restore_distance_from_bottom(self, generation: int, distance: int) -> None:
+        if generation != self._scroll_restore_generation:
+            return
+        existing_animation = getattr(self, "_scroll_animation", None)
+        if existing_animation is not None:
+            existing_animation.stop()
         scrollbar = self._scroll.verticalScrollBar()
         if scrollbar is None:
             return
+        target = max(
+            scrollbar.minimum(),
+            scrollbar.maximum() - max(0, distance),
+        )
+        scrollbar.setValue(target)
+
+    def _smooth_scroll_to_bottom(self):
+        self.cancel_scheduled_scroll_restore()
+        scrollbar = self._scroll.verticalScrollBar()
+        if scrollbar is None:
+            return
+        existing_animation = getattr(self, "_scroll_animation", None)
+        if existing_animation is not None:
+            existing_animation.stop()
         target = scrollbar.maximum()
         current = scrollbar.value()
         if current == target:
@@ -1619,3 +1804,48 @@ class MessagesView(QWidget):
         self._scroll_animation.setEndValue(target)
         self._scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._scroll_animation.start()
+
+    def _smooth_scroll_to_message(self, message_id: UUID) -> bool:
+        target = self.message_list.message_widget(message_id)
+        if target is None:
+            return False
+
+        self.cancel_scheduled_scroll_restore()
+        scrollbar = self._scroll.verticalScrollBar()
+        if scrollbar is None:
+            return False
+        target_top = target.mapTo(self.message_list, QPoint(0, 0)).y()
+        target_value = target_top - max(
+            0,
+            (self._scroll.viewport().height() - target.height()) // 2,
+        )
+        target_value = max(scrollbar.minimum(), min(scrollbar.maximum(), target_value))
+        current = scrollbar.value()
+        if current == target_value:
+            self._highlight_message(message_id, target)
+            return True
+
+        existing_animation = getattr(self, "_scroll_animation", None)
+        if existing_animation is not None:
+            existing_animation.stop()
+        self._scroll_animation = QPropertyAnimation(scrollbar, b"value")
+        self._scroll_animation.setDuration(450)
+        self._scroll_animation.setStartValue(current)
+        self._scroll_animation.setEndValue(target_value)
+        self._scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._scroll_animation.finished.connect(
+            lambda: self._highlight_message(message_id, target)
+        )
+        self._scroll_animation.start()
+        return True
+
+    def _highlight_message(
+        self,
+        message_id: UUID,
+        target: QWidget,
+    ) -> None:
+        if self.message_list.message_widget(message_id) is not target:
+            return
+        highlight = getattr(target, "highlight", None)
+        if callable(highlight):
+            highlight()

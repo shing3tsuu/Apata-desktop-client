@@ -73,11 +73,14 @@ def _messages_panel() -> MessagesPanel:
     )
 
 
-def test_messages_panel_renders_loaded_image_bytes() -> None:
+def test_messages_panel_renders_preloaded_image_without_placeholder() -> None:
     application = _application()
     panel = _messages_panel()
     contact = _contact()
     message_id = uuid4()
+    image_data = (
+        Path(__file__).parents[1] / "test_data" / "images" / "image_1.png"
+    ).read_bytes()
     contact.messages.append(
         MessageCache(
             id=message_id,
@@ -92,14 +95,11 @@ def test_messages_panel_renders_loaded_image_bytes() -> None:
             timestamp=datetime.now(timezone.utc),
             is_outgoing=False,
             is_delivered=True,
+            file_content=image_data,
         )
     )
-    image_data = (
-        Path(__file__).parents[1] / "test_data" / "images" / "image_1.png"
-    ).read_bytes()
 
     panel.show_conversation(contact)
-    panel.set_loaded_file_contents(contact, {message_id: image_data})
 
     image_bubbles = [
         panel.messages_view.message_list._layout.itemAt(index).widget()
@@ -111,6 +111,7 @@ def test_messages_panel_renders_loaded_image_bytes() -> None:
     ]
     assert len(image_bubbles) == 1
     assert image_bubbles[0].has_image is True
+    assert panel.missing_image_message_ids(contact) == []
     panel.close()
     application.processEvents()
 
@@ -489,6 +490,304 @@ def test_failed_reply_send_preserves_reply_selection() -> None:
     application.processEvents()
 
 
+def test_clicking_reply_smoothly_scrolls_to_original_message() -> None:
+    application = _application()
+    panel = _messages_panel()
+    panel.resize(720, 320)
+    contact = _contact()
+    source_id = uuid4()
+    started_at = datetime(2026, 10, 13, 10, tzinfo=timezone.utc)
+    contact.messages.append(
+        MessageCache(
+            id=source_id,
+            server_message_id=uuid4(),
+            contact_id=contact.id,
+            chat_id=None,
+            content_type=MessageContentTypeEnum.TEXT,
+            content="Original message",
+            file_name=None,
+            file_size=None,
+            file_mime_type=None,
+            timestamp=started_at,
+            is_outgoing=False,
+            is_delivered=True,
+        )
+    )
+    for index in range(18):
+        contact.messages.append(
+            MessageCache(
+                id=uuid4(),
+                server_message_id=uuid4(),
+                contact_id=contact.id,
+                chat_id=None,
+                content_type=MessageContentTypeEnum.TEXT,
+                content=f"Filler message {index}",
+                file_name=None,
+                file_size=None,
+                file_mime_type=None,
+                timestamp=started_at,
+                is_outgoing=index % 2 == 0,
+                is_delivered=True,
+            )
+        )
+    reply_id = uuid4()
+    contact.messages.append(
+        MessageCache(
+            id=reply_id,
+            server_message_id=uuid4(),
+            contact_id=contact.id,
+            chat_id=None,
+            content_type=MessageContentTypeEnum.TEXT,
+            content="Reply body",
+            file_name=None,
+            file_size=None,
+            file_mime_type=None,
+            timestamp=started_at,
+            is_outgoing=True,
+            is_delivered=True,
+            reply_to_id=source_id,
+            reply_author=contact.username,
+            reply_text="Original message",
+        )
+    )
+
+    panel.show_conversation(contact)
+    panel.show()
+    application.processEvents()
+    QTest.qWait(550)
+
+    scrollbar = panel.messages_view._scroll.verticalScrollBar()
+    assert scrollbar.value() > scrollbar.minimum()
+    source_bubble = panel.messages_view.message_list.message_bubble(source_id)
+    reply_bubble = panel.messages_view.message_list.message_bubble(reply_id)
+    assert source_bubble is not None
+    assert reply_bubble is not None
+
+    QTest.mouseClick(
+        reply_bubble,
+        Qt.MouseButton.LeftButton,
+        pos=reply_bubble._reply_rect().center(),
+    )
+    QTest.qWait(500)
+
+    assert scrollbar.value() == scrollbar.minimum()
+    assert source_bubble._highlighted is True
+    panel.close()
+    application.processEvents()
+
+
+def test_reply_without_loaded_target_is_not_navigable() -> None:
+    application = _application()
+    panel = _messages_panel()
+    missing_target_id = uuid4()
+    bubble = panel.messages_view.message_list.add_message(
+        server_message_id=uuid4(),
+        local_message_id=uuid4(),
+        text="Reply body",
+        is_mine=False,
+        reply_author="REPLY",
+        reply_text="MESSAGE IS UNAVAILABLE",
+        reply_to_id=missing_target_id,
+    )
+    requests: list[object] = []
+    panel.messages_view.message_list.reply_target_requested.connect(requests.append)
+
+    QTest.mouseClick(
+        bubble,
+        Qt.MouseButton.LeftButton,
+        pos=bubble._reply_rect().center(),
+    )
+
+    assert requests == []
+    assert panel.messages_view._smooth_scroll_to_message(missing_target_id) is False
+    panel.close()
+    application.processEvents()
+
+
+def test_conversation_opens_at_bottom_and_refresh_preserves_scroll_position() -> None:
+    application = _application()
+    panel = _messages_panel()
+    panel.resize(900, 480)
+    panel.show()
+    application.processEvents()
+    contact = _contact()
+    started_at = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
+    contact.messages = [
+        MessageCache(
+            id=uuid4(),
+            server_message_id=uuid4(),
+            contact_id=contact.id,
+            chat_id=None,
+            content_type=MessageContentTypeEnum.TEXT,
+            content=f"Preview message {index}",
+            file_name=None,
+            file_size=None,
+            file_mime_type=None,
+            timestamp=started_at,
+            is_outgoing=False,
+            is_delivered=True,
+        )
+        for index in range(30)
+    ]
+
+    panel.show_conversation(contact)
+    QTest.qWait(20)
+
+    scrollbar = panel.messages_view._scroll.verticalScrollBar()
+    assert scrollbar.maximum() > scrollbar.minimum()
+    assert scrollbar.value() == scrollbar.maximum()
+
+    distance = min(100, scrollbar.maximum())
+    scrollbar.setValue(scrollbar.maximum() - distance)
+    contact.messages[:0] = [
+        MessageCache(
+            id=uuid4(),
+            server_message_id=uuid4(),
+            contact_id=contact.id,
+            chat_id=None,
+            content_type=MessageContentTypeEnum.TEXT,
+            content=f"Older message {index}",
+            file_name=None,
+            file_size=None,
+            file_mime_type=None,
+            timestamp=started_at,
+            is_outgoing=False,
+            is_delivered=True,
+        )
+        for index in range(10)
+    ]
+
+    panel.show_conversation(contact, preserve_scroll_position=True)
+    QTest.qWait(20)
+
+    assert scrollbar.maximum() - scrollbar.value() == distance
+    panel.close()
+    application.processEvents()
+
+
+@pytest.mark.asyncio
+async def test_conversation_opens_preview_then_applies_full_history_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application = _application()
+    container = object()
+    previous = _contact()
+    contact = _contact()
+    started_at = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
+
+    previous.messages = [
+        MessageCache(
+            id=uuid4(),
+            server_message_id=uuid4(),
+            contact_id=previous.id,
+            chat_id=None,
+            content_type=MessageContentTypeEnum.TEXT,
+            content=f"Previous {index}",
+            file_name=None,
+            file_size=None,
+            file_mime_type=None,
+            timestamp=started_at,
+            is_outgoing=False,
+            is_delivered=True,
+        )
+        for index in range(12)
+    ]
+    previous.history_loaded = True
+    preview = [
+        MessageCache(
+            id=uuid4(),
+            server_message_id=uuid4(),
+            contact_id=contact.id,
+            chat_id=None,
+            content_type=MessageContentTypeEnum.TEXT,
+            content=f"Preview {index}",
+            file_name=None,
+            file_size=None,
+            file_mime_type=None,
+            timestamp=started_at,
+            is_outgoing=False,
+            is_delivered=True,
+        )
+        for index in range(10)
+    ]
+    full_history = [
+        MessageCache(
+            id=uuid4(),
+            server_message_id=uuid4(),
+            contact_id=contact.id,
+            chat_id=None,
+            content_type=MessageContentTypeEnum.TEXT,
+            content=f"Full {index}",
+            file_name=None,
+            file_size=None,
+            file_mime_type=None,
+            timestamp=started_at,
+            is_outgoing=False,
+            is_delivered=True,
+        )
+        for index in range(14)
+    ]
+    image_data = (
+        Path(__file__).parents[1] / "test_data" / "images" / "image_1.png"
+    ).read_bytes()
+    preview[-1].content_type = MessageContentTypeEnum.IMAGE
+    preview[-1].content = None
+    preview[-1].file_name = "recent-photo"
+    preview[-1].file_size = len(image_data)
+    preview[-1].file_mime_type = MessageContentMimeTypeEnum.PNG
+    preview[-1].file_content = image_data
+    full_history[-1].id = preview[-1].id
+    full_history[-1].server_message_id = preview[-1].server_message_id
+    full_history[-1].content_type = MessageContentTypeEnum.IMAGE
+    full_history[-1].content = None
+    full_history[-1].file_name = "recent-photo"
+    full_history[-1].file_size = len(image_data)
+    full_history[-1].file_mime_type = MessageContentMimeTypeEnum.PNG
+    contact.messages = preview.copy()
+    loader = AsyncMock(return_value=(True, "SUCCESS", full_history))
+    monkeypatch.setattr(
+        interface_module,
+        "LoadConversationMessagesInteractor",
+        lambda: loader,
+    )
+    messenger = MessengerInterface(SimpleNamespace(container=container))
+    messenger._contacts = [previous, contact]
+    messenger.messages_panel.show_conversation(previous)
+
+    messenger._show_conversation(contact)
+
+    task = messenger._conversation_loading_task
+    assert task is not None
+    assert contact.messages == preview
+    assert (
+        len(messenger.messages_panel.messages_view.message_list._message_widgets) == 10
+    )
+    assert any(
+        isinstance(widget, ImageBubble)
+        for widget in messenger.messages_panel.messages_view.message_list._message_widgets.values()
+    )
+    assert messenger._file_loading_task is None
+    assert previous.history_loaded is False
+    assert len(previous.messages) == 10
+
+    await task
+
+    loader.assert_awaited_once_with(
+        container,
+        contact,
+        update_cache=False,
+    )
+    assert contact.history_loaded is True
+    assert contact.messages == full_history
+    assert contact.messages[-1].file_content == image_data
+    assert messenger._file_loading_task is None
+    assert (
+        len(messenger.messages_panel.messages_view.message_list._message_widgets) == 14
+    )
+    messenger.close()
+    application.processEvents()
+
+
 @pytest.mark.asyncio
 async def test_interface_loads_cached_image_when_contact_is_opened(
     monkeypatch: pytest.MonkeyPatch,
@@ -840,9 +1139,7 @@ async def test_interface_resolves_and_routes_chat_reply_targets(
     )
     chat.messages.append(source)
     reply_targets = {uuid4(): uuid4()}
-    targets_interactor = AsyncMock(
-        return_value=(True, "SUCCESS", reply_targets)
-    )
+    targets_interactor = AsyncMock(return_value=(True, "SUCCESS", reply_targets))
     saved = SimpleNamespace(id=uuid4(), server_message_id=uuid4())
     chat_interactor = AsyncMock(return_value=(True, "SUCCESS", saved))
     monkeypatch.setattr(

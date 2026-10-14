@@ -120,6 +120,11 @@ class MessageService:
             return await self._decrypt_one(msg)
         return msg
 
+    async def _decrypt_recent_preview(self, msg: MessageDTO) -> MessageDTO | None:
+        if msg.file_content is not None:
+            return await self._decrypt_one(msg)
+        return await self._decrypt_preview(msg)
+
     @error_handler
     async def get_messages(
         self,
@@ -160,6 +165,27 @@ class MessageService:
             contact_id=contact_id,
             chat_id=chat_id,
             limit=limit,
+        )
+        decrypted = await asyncio.gather(
+            *(self._decrypt_recent_preview(message) for message in messages)
+        )
+        return [message for message in decrypted if message is not None]
+
+    @error_handler
+    async def get_conversation_messages(
+        self,
+        local_user_id: UUID,
+        *,
+        contact_id: UUID | None = None,
+        chat_id: UUID | None = None,
+    ) -> list[MessageDTO]:
+        if self._master_key is None:
+            raise ValueError("Master key is not set")
+
+        messages = await self._message_dao.get_conversation_messages(
+            local_user_id,
+            contact_id=contact_id,
+            chat_id=chat_id,
         )
         decrypted = await asyncio.gather(
             *(self._decrypt_preview(message) for message in messages)
