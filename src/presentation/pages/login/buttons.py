@@ -167,14 +167,32 @@ class ChooseButton(QWidget):
 
         if event.pos().x() < half_width:
             if self.active_side != "left":
-                self.active_side = "left"
-                self.animate_switch("left")
+                self.set_active_side("left")
                 self.registration_clicked.emit()
         else:
             if self.active_side != "right":
-                self.active_side = "right"
-                self.animate_switch("right")
+                self.set_active_side("right")
                 self.login_clicked.emit()
+
+    def set_active_side(self, side: str, *, animated: bool = True) -> None:
+        if side not in {"left", "right"}:
+            raise ValueError(f"Unsupported active side: {side}")
+
+        timer = getattr(self, "timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+        self.active_side = side
+        if animated:
+            self.animate_switch(side)
+            return
+
+        self.left_color = (
+            self.color_primary if side == "left" else self.color_inactive
+        )
+        self.right_color = (
+            self.color_primary if side == "right" else self.color_inactive
+        )
+        self.update()
 
     def animate_switch(self, target_side: str):
         self.timer = QTimer()
@@ -286,6 +304,14 @@ class AccessButton(QPushButton):
 
     def update_style(self, bg_color):
         self.current_bg_color = bg_color
+        self.update()
+
+    def reset(self) -> None:
+        timer = getattr(self, "timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+        self.current_bg_color = self.color_primary
+        self.setEnabled(True)
         self.update()
 
     def animate_to_red(self):

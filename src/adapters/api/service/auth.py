@@ -226,8 +226,10 @@ class AuthHTTPService:
             return result.access_token
 
     async def logout(self) -> bool:
-        if not self._is_authenticated:
+        token = self._current_token or self._app_state.token
+        if token is None:
             self._logger.debug("No active session to logout")
+            self._clear_session()
             return True
 
         username = (
@@ -238,8 +240,7 @@ class AuthHTTPService:
         success = True
 
         try:
-            if self._current_token:
-                await self._auth_dao.logout(self._current_token)
+            await self._auth_dao.logout(token)
             self._logger.debug("Remote logout successful")
         except Exception as e:
             self._logger.warning(f"Remote logout failed (proceeding locally): {e}")

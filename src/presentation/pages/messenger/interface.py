@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -31,8 +32,10 @@ from src.presentation.interactors.messenger import (
 from src.providers.cache import ChatCache, ContactCache, MessageCache
 from src.providers.state import AppState
 
+from .buttons import LogoutButton
 from .demo_data import build_demo_conversations
 from .fields import ReplySelection
+from .logout import LogoutConfirmationOverlay
 from .panels import ContactsPanel, MessagesPanel, PanelDivider
 from .theme import (
     COLOR_BACKGROUND,
@@ -50,6 +53,8 @@ logger = logging.getLogger(__name__)
 
 
 class MessengerInterface(QWidget):
+    logout_requested = pyqtSignal()
+
     def __init__(self, main_window=None):
         super().__init__()
         self.main_window = main_window
@@ -122,6 +127,77 @@ class MessengerInterface(QWidget):
         )
 
         self.setLayout(root_layout)
+
+        self.logout_confirmation = LogoutConfirmationOverlay(
+            color_primary=COLOR_PRIMARY,
+            color_inactive=COLOR_THIRD,
+            color_background=COLOR_BACKGROUND,
+            color_text=COLOR_THIRD,
+            parent=self,
+        )
+        self.logout_confirmation.setGeometry(self.rect())
+        self.logout_confirmation.confirmed.connect(self.logout_requested.emit)
+
+        self.logout_button = LogoutButton(
+            color_default=COLOR_THIRD,
+            color_hover=COLOR_PRIMARY,
+            parent=self,
+        )
+        self.logout_button.clicked.connect(self.logout_confirmation.open_panel)
+        self._position_logout_button()
+        self.logout_button.show()
+        self.logout_button.raise_()
+
+    def _position_logout_button(self) -> None:
+        horizontal_margin = 16
+        vertical_margin = 9
+        self.logout_button.move(
+            self.width() - self.logout_button.width() - horizontal_margin,
+            vertical_margin,
+        )
+
+    def reset_session(self) -> None:
+        tasks = [
+            self._search_task,
+            self._chat_creation_task,
+            self._conversation_loading_task,
+            self._file_loading_task,
+            *self._chat_participant_tasks.values(),
+            *self._message_tasks,
+            *self._contact_action_tasks,
+        ]
+        for task in tasks:
+            if task is not None and not task.done():
+                task.cancel()
+
+        self._search_task = None
+        self._chat_creation_task = None
+        self._conversation_loading_task = None
+        self._file_loading_task = None
+        self._chat_participant_tasks.clear()
+        self._message_tasks.clear()
+        self._contact_action_tasks.clear()
+        self._contacts = []
+        self._chats = []
+        self._current_user_id = None
+        self._current_username = None
+
+        self.logout_confirmation.close_panel()
+        self.contacts_panel.reset_session()
+        self.messages_panel.set_available_contacts([])
+        self.messages_panel.set_current_user(None)
+        self._show_conversation(None)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not hasattr(self, "logout_button"):
+            return
+        self.logout_confirmation.setGeometry(self.rect())
+        self._position_logout_button()
+        if self.logout_confirmation.isVisible():
+            self.logout_confirmation.raise_()
+        else:
+            self.logout_button.raise_()
 
     def _handle_contact_action(
         self,

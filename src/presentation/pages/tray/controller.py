@@ -67,6 +67,13 @@ class TrayController:
     def arm_notifications(self) -> None:
         self._tracker.arm_from_state()
 
+    def reset_session(self) -> None:
+        self._tracker.reset()
+        for task in tuple(self._background_tasks):
+            if not task.done():
+                task.cancel()
+        self._background_tasks.clear()
+
     def refresh_from_state(self) -> None:
         notifications = self._tracker.collect_new()
         if self._window.isVisible() and self._window.isActiveWindow():

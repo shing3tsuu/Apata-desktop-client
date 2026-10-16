@@ -546,3 +546,28 @@ Add focused tests for full-history loading and cache replacement when switching 
 - Added focused database, interactor, and Qt UI coverage, including verification that the ten-message preview remains visible until the background task applies the full history. The targeted database, file-interactor, and UI suites pass with `99 passed`; Ruff, Ruff formatting, Python compilation, and whitespace checks also pass. Mypy remains unavailable because the copied project virtual environment points to a missing Python installation.
 
 closed: true
+
+## Task 16 — Log Out from the Authenticated Client
+
+Add a logout button to the authenticated messenger interface and connect it to a dedicated logout interactor. The interactor must perform an orderly transition from the current authenticated session back to the login interface without requiring an application restart.
+
+Before clearing authentication state, report offline presence when possible and stop the realtime listener, reconnect loop, tray notification flow, and authenticated background synchronization. Clear the access token and all account-specific in-memory state, including active conversation selection, cached contacts, chats, messages, pending reply/file state, and notification baselines. Prevent late background-task results or WebSocket events from repopulating state after logout.
+
+Preserve the user's encrypted local database and long-lived cryptographic keys; logout must not behave like account deletion or local-data reset. Do not add a new server endpoint unless inspection shows that the current API requires one and the change is discussed with the user first. Network failure while reporting offline must not trap the user inside the authenticated interface.
+
+Make repeated clicks and logout during reconnect/synchronization safe. After logout, the login page must be usable immediately, and signing in again—either to the same account or another account—must initialize a clean authenticated UI and start realtime exactly once.
+
+Add focused tests for the logout interactor, presence/realtime shutdown ordering, account-state cleanup, resistance to late callbacks, idempotent repeated logout, login-page transition, and successful login after logout. Run the relevant tests, Ruff, and mypy before closing the task.
+
+### Implementation progress
+
+- Added the logout control as a dark-gray `⍈` symbol in the upper-right corner with comfortable edge margins. Hovering changes it to the primary red and smoothly enlarges the glyph.
+- Clicking the logout control opens a centered, contact-card-style hexagonal confirmation panel. Its dark-gray outer frame uses the same side-angle proportions as its inner buttons and contains the spaced dark-gray prompt `A R E  Y O U  S U R E  T O  L O G O U T ?` above separate `Y E S` and `N O` hexagonal buttons. The buttons use the same dark gray for their default text and border and retain the primary-red hover state.
+- Added `LogoutInteractor` to the login interactors. It reports offline presence when possible, stops the realtime synchronization and reconnect lifecycle, calls the authenticated server logout endpoint, and always clears account-specific `AppState` data even when the network-side revocation fails.
+- Connected confirmation to the application lifecycle with duplicate-click protection. Logout cancels messenger background work, clears selections, pending UI state, conversation caches, search and notification baselines, and returns to the reusable login screen without deleting the encrypted local database or long-lived keys stored on disk.
+- Re-entering the login screen now resets its complete transient UI state: username and password input, logs and loading progress, selected registration/login tab, access-button animation, account picker visibility and contents, and the cached local-account list. Local account names are then reloaded asynchronously from the database.
+- Implemented real server-side access-token revocation. The server stores only a SHA-256 token fingerprint in Redis with a TTL equal to the JWT's remaining lifetime, rejects revoked tokens with HTTP 401, and issues every new access token with a unique `jti` so logging out one session does not revoke another session of the same account.
+- Verified all 91 server unit tests, the client logout/realtime/UI behavior with 25 focused tests, and the complete live contract against the local API: the token succeeds before logout, `DELETE /auth/tokens/current` succeeds, and the same token is rejected afterward with `401 Token revoked`. Ruff, Python compilation, and whitespace checks pass in both repositories. Mypy could not complete because the copied client environment has a broken launcher and the server's installed mypy reports an internal error under Python 3.14.
+- Manually verified the complete UI flow: confirming logout returns to the login screen, and the login form, logs, controls, and local-account picker reopen in a clean state.
+
+closed: true

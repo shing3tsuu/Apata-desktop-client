@@ -51,6 +51,17 @@ class ConversationSearchPanel(QWidget):
     def mode(self) -> str:
         return self._mode
 
+    def reset_session(self) -> None:
+        self._queries = {"contacts": "", "chats": ""}
+        self.global_search_toggle.set_checked(False)
+        self._mode = "contacts"
+        blocker = QSignalBlocker(self.search_field)
+        self.search_field.set_text("")
+        del blocker
+        self.search_field.set_placeholder_text("SEARCH CONTACTS")
+        self.create_chat_button.hide()
+        self._update_global_search_visibility()
+
     def set_mode(self, mode: str) -> None:
         if mode not in {"contacts", "chats"}:
             raise ValueError(f"Unsupported search mode: {mode}")

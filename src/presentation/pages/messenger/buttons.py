@@ -337,6 +337,142 @@ class AddChatParticipantButton(QWidget):
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "⛨")
 
 
+class LogoutButton(QWidget):
+    clicked = pyqtSignal()
+
+    def __init__(
+        self,
+        color_default: str,
+        color_hover: str,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.color_default = color_default
+        self.color_hover = color_hover
+        self._hovered = False
+        self._scale = 1.0
+
+        self.setFixedSize(44, 34)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("LOG OUT")
+        self.setStyleSheet("background: transparent;")
+
+        self._scale_animation = QVariantAnimation(self)
+        self._scale_animation.setDuration(140)
+        self._scale_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._scale_animation.valueChanged.connect(self._set_scale)
+
+    def _set_scale(self, value: float) -> None:
+        self._scale = float(value)
+        self.update()
+
+    def _animate_scale(self, target: float) -> None:
+        self._scale_animation.stop()
+        self._scale_animation.setStartValue(self._scale)
+        self._scale_animation.setEndValue(target)
+        self._scale_animation.start()
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        self._animate_scale(1.16)
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self._animate_scale(1.0)
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(
+            QColor(self.color_hover if self._hovered else self.color_default)
+        )
+        font = QFont("Segoe UI Symbol", 25, QFont.Weight.Normal)
+        font.setPointSizeF(25 * self._scale)
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "⍈")
+
+
+class LogoutConfirmationButton(QWidget):
+    clicked = pyqtSignal()
+
+    def __init__(
+        self,
+        text: str,
+        color_default: str,
+        color_hover: str,
+        color_background: str,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.text = text
+        self.color_default = color_default
+        self.color_hover = color_hover
+        self.color_background = color_background
+        self._hovered = False
+
+        self.setFixedHeight(52)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("background: transparent;")
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        triangle_width = 11
+        margin = 1
+        path = QPainterPath()
+        path.moveTo(margin + triangle_width, margin)
+        path.lineTo(margin, self.height() / 2)
+        path.lineTo(margin + triangle_width, self.height() - margin)
+        path.lineTo(self.width() - margin - triangle_width, self.height() - margin)
+        path.lineTo(self.width() - margin, self.height() / 2)
+        path.lineTo(self.width() - margin - triangle_width, margin)
+        path.closeSubpath()
+
+        color = self.color_hover if self._hovered else self.color_default
+        painter.fillPath(path, QColor(self.color_background))
+        painter.setPen(QPen(QColor(color), 2 if self._hovered else 1))
+        painter.drawPath(path)
+        painter.setPen(QColor(color))
+        painter.setFont(QFont("Roboto Condensed", 11, QFont.Weight.Normal))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text)
+
+
 class CreateChatSubmitButton(QWidget):
     clicked = pyqtSignal()
 

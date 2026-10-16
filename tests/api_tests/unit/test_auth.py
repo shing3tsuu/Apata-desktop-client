@@ -11,7 +11,7 @@ from src.adapters.api.dto import AuthRegisterResponseDTO
 from src.adapters.api.service import AuthHTTPService
 from src.adapters.encryption.service import EncryptionService
 from src.adapters.encryption.service.dto import GenerateKeyPairResult
-from src.exceptions import UserAlreadyExistsError
+from src.exceptions import AuthenticationError, UserAlreadyExistsError
 from src.providers import AppProvider, StateProvider
 from src.providers.state import AppState
 from tests.timing_wrapper import timer
@@ -108,6 +108,8 @@ def test_auth_dao_challenge_login_and_logout_against_live_api() -> None:
 
                 token_response = await dao.login(username, signature)
                 logout_response = await dao.logout(token_response.access_token)
+                with pytest.raises(AuthenticationError):
+                    await dao.get_current_user(token_response.access_token)
         finally:
             await container.close()
 

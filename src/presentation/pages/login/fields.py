@@ -37,6 +37,16 @@ class LoginField(QLineEdit):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
 
+    def reset(self) -> None:
+        timer = getattr(self, "timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+        self.clear()
+        self.clearFocus()
+        self.is_focused = False
+        self.current_border_color = self.color_secondary
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)

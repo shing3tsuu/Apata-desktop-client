@@ -261,7 +261,7 @@ class LoginInterface(QWidget):
         self.accounts_panel.raise_()
 
     def _start_local_usernames_loading(self):
-        if self._local_usernames_task is None:
+        if self._local_usernames_task is None or self._local_usernames_task.done():
             self._local_usernames_task = asyncio.create_task(
                 self._load_local_usernames()
             )
@@ -583,8 +583,18 @@ class LoginInterface(QWidget):
 
     async def prepare_screen(self, **kwargs):
         self.mode = "register"
+        self.username = ""
+        self.password = ""
+        self.username_field.reset()
+        self.password_field.reset()
+        self.logs_container.clear()
+        self.choose_button.set_active_side("left", animated=False)
+        self.button.reset()
         self.account_toggle_button.set_expanded(False, animated=False)
         self.account_toggle_button.hide()
         self.account_toggle_placeholder.hide()
         self.accounts_panel.hide()
+        self.accounts_panel.set_loading()
+        self.local_usernames = []
+        self.local_usernames_ready = False
         self._start_local_usernames_loading()

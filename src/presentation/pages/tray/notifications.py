@@ -32,6 +32,10 @@ class MessageNotificationTracker:
         }
         self._armed = True
 
+    def reset(self) -> None:
+        self._known_message_ids.clear()
+        self._armed = False
+
     def collect_new(self) -> list[TrayNotification]:
         cached_messages = list(self._iter_cached_messages())
         current_ids = {message.id for message, _title in cached_messages}

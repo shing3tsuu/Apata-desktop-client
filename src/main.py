@@ -8,7 +8,7 @@ from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
 from src.adapters.api.service import AuthHTTPService
-from src.presentation.interactors.login import RealtimeInteractor
+from src.presentation.interactors.login import LogoutInteractor, RealtimeInteractor
 from src.presentation.pages.login import LoginInterface
 from src.presentation.pages.messenger import MessengerInterface
 from src.presentation.pages.tray import TrayController, create_apata_icon
@@ -23,6 +23,8 @@ class MainWindow(QMainWindow):
         self.current_screen = None
         self.screens = {}
         self.realtime_interactor = None
+        self.logout_interactor = None
+        self._logout_task: asyncio.Task[None] | None = None
         self.tray_controller = None
         self.setup_ui()
 
@@ -62,8 +64,12 @@ class MainWindow(QMainWindow):
             "messenger": MessengerInterface(self),
         }
         self.realtime_interactor = RealtimeInteractor(self.container, logger)
+        self.logout_interactor = LogoutInteractor(self.realtime_interactor, logger)
         self.realtime_interactor.add_listener(
             self.screens["messenger"].refresh_from_state
+        )
+        self.screens["messenger"].logout_requested.connect(
+            self._schedule_logout
         )
 
         async with self.container() as request_container:
@@ -101,6 +107,13 @@ class MainWindow(QMainWindow):
         self.current_screen = screen_name
 
     async def cleanup(self):
+        logout_task = self._logout_task
+        if logout_task is not None and not logout_task.done():
+            logout_task.cancel()
+            try:
+                await logout_task
+            except asyncio.CancelledError:
+                pass
         if self.realtime_interactor is not None:
             await self.realtime_interactor.stop()
         if self.container:
@@ -111,7 +124,42 @@ class MainWindow(QMainWindow):
             await self.realtime_interactor.stop()
         if self.tray_controller is not None:
             self.tray_controller.restore_window()
+        self._reset_authenticated_ui()
         await self.show_screen("login")
+
+    def _schedule_logout(self) -> None:
+        if self._logout_task is not None and not self._logout_task.done():
+            return
+        self._logout_task = asyncio.create_task(self._logout())
+        self._logout_task.add_done_callback(self._logout_finished)
+
+    async def _logout(self) -> None:
+        if self.container is None or self.logout_interactor is None:
+            return
+
+        _success, message = await self.logout_interactor(self.container)
+        if message != "SUCCESS":
+            logging.getLogger(__name__).warning(message)
+
+        self._reset_authenticated_ui()
+        await self.show_screen("login")
+
+    def _logout_finished(self, task: asyncio.Task[None]) -> None:
+        if self._logout_task is task:
+            self._logout_task = None
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception:
+            logging.getLogger(__name__).exception("Logout failed unexpectedly")
+
+    def _reset_authenticated_ui(self) -> None:
+        messenger = self.screens.get("messenger")
+        if isinstance(messenger, MessengerInterface):
+            messenger.reset_session()
+        if self.tray_controller is not None:
+            self.tray_controller.reset_session()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         tray_controller = self.tray_controller

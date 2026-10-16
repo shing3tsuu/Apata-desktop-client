@@ -214,6 +214,16 @@ class ContactsPanel(QWidget):
         self._chats = chats
         self._render_active_section()
 
+    def reset_session(self) -> None:
+        self._contacts = []
+        self._chats = []
+        self._active_section = "contacts"
+        self.contacts_tab.set_active(True)
+        self.chats_tab.set_active(False)
+        self.search_panel.reset_session()
+        self.chat_creation_panel.close_panel(clear=True)
+        self._render_active_section()
+
     def show_contact_search_results(self, contacts: list[ContactCache]) -> None:
         if self._active_section == "contacts":
             self.contact_list.set_conversations(

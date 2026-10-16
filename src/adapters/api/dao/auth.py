@@ -59,7 +59,11 @@ class AuthHTTPDAO:
     async def logout(self, token: str) -> dict[str, Any]:
         self._http_client.set_auth_token(token)
         return self._expect_object(
-            await self._http_client.delete("/auth/tokens/current")
+            await self._http_client.delete(
+                "/auth/tokens/current",
+                max_attempts=1,
+                timeout=10.0,
+            )
         )
 
     async def get_current_user(self, token: str) -> dict[str, Any]:

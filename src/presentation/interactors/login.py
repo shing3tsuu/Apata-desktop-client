@@ -1354,3 +1354,44 @@ class RealtimeInteractor:
                     await result
             except Exception:
                 self._logger.exception("Realtime UI listener failed")
+
+
+class LogoutInteractor:
+    def __init__(
+        self,
+        realtime_interactor: RealtimeInteractor,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self._realtime_interactor = realtime_interactor
+        self._logger = logger or logging.getLogger(__name__)
+        self._lock = asyncio.Lock()
+
+    async def __call__(self, container: AsyncContainer) -> tuple[bool, str]:
+        async with self._lock:
+            remote_logout_succeeded = True
+
+            try:
+                await self._realtime_interactor.set_presence(False)
+            except Exception:
+                self._logger.exception("Failed to report offline presence during logout")
+
+            try:
+                await self._realtime_interactor.stop()
+            except Exception:
+                self._logger.exception("Failed to stop realtime during logout")
+
+            async with container() as request_container:
+                auth_http_service = await request_container.get(AuthHTTPService)
+                app_state = await request_container.get(AppState)
+
+                try:
+                    remote_logout_succeeded = await auth_http_service.logout()
+                except Exception:
+                    remote_logout_succeeded = False
+                    self._logger.exception("Remote logout failed")
+                finally:
+                    app_state.clear_state()
+
+            if remote_logout_succeeded:
+                return True, "SUCCESS"
+            return True, "LOGGED OUT LOCALLY; REMOTE TOKEN REVOCATION FAILED"
